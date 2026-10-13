@@ -165,28 +165,48 @@ test("两者都没有时不设 user，交给 Magpie 退回显示 API Key", async
   assert.equal("user" in usage, false);
 });
 
-test("authorize 把填写的账号作为 accountId 返回，账号行才不显示 API Key", async () => {
-  // Magpie 依次用 accountId、metadata.email、email 给账号命名；没有这些才退回
-  // 「API key …尾4位」。所以想改账号行，只能在这里给 accountId —— usage.user
-  // 不参与命名（实测：hook 返回的 user 落进额度缓存，账号行仍渲染登录期的标签）。
+test("账号提问的 key 必须是 email，否则账号行只显示 API Key", async () => {
+  // Magpie 依次用 accountId、metadata.email、email 给账号命名，而提示的 key
+  // 决定答案落进 metadata 的哪个字段。实测：api 类型下 authorize 返回的
+  // accountId 与 metadata 都不起作用（前者被忽略，后者被提示答案覆盖），
+  // 只有把提示字段命名为 email 才真的改到账号行；改回去就退化成「API key …尾4位」。
   const plugin = await SenseNovaPlugin({}, {});
-  const method = plugin.auth.methods[0];
-  assert.deepEqual(await method.authorize({ key: "sk-test", username: "13800000000" }), {
-    type: "success",
-    key: "sk-test",
-    accountId: "13800000000",
-  });
+  assert.deepEqual(
+    plugin.auth.methods[0].prompts.map((p) => p.key),
+    ["key", "email", "password"]
+  );
 });
 
-test("没填账号时不给 accountId，好让 Magpie 退回 API Key 标签", async () => {
+test("三条提示都带本地化后的文案", async () => {
+  const en = await SenseNovaPlugin({}, { locale: "en" });
+  for (const p of en.auth.methods[0].prompts) {
+    assert.ok(typeof p.message === "string" && p.message.length > 0, `${p.key} 缺 message`);
+  }
+  assert.match(en.auth.methods[0].prompts[1].message, /Optional/, "英文表应生效");
+});
+
+test("authorize 只回 {type, key}，命名交给提示字段", async () => {
   const plugin = await SenseNovaPlugin({}, {});
-  const method = plugin.auth.methods[0];
-  const out = await method.authorize({ key: "sk-test", username: "   " });
-  assert.equal("accountId" in out, false);
+  const out = await plugin.auth.methods[0].authorize({ key: "sk-test", email: "13800000000" });
   assert.deepEqual(out, { type: "success", key: "sk-test" });
 });
 
 test("authorize 仍然拒绝空 key", async () => {
   const plugin = await SenseNovaPlugin({}, {});
   await assert.rejects(() => plugin.auth.methods[0].authorize({ key: "  " }), /API Key|API key/);
+});
+
+test("consoleAuthOf 认 email，也兼容旧的 username / account", async () => {
+  const { consoleAuthOf } = await import("../internal.mjs");
+  assert.equal(consoleAuthOf({ metadata: { email: "ada@example.com" } }).username, "ada@example.com");
+  // 改名前登录的账号存在 username 下，不能因为改名就丢掉那套控制台凭据。
+  assert.equal(consoleAuthOf({ metadata: { username: "旧账号" } }).username, "旧账号");
+  assert.equal(consoleAuthOf({ metadata: { account: "别名" } }).username, "别名");
+  // email 优先，且去空白
+  assert.equal(
+    consoleAuthOf({ metadata: { email: "  new@x.com  ", username: "old" } }).username,
+    "new@x.com"
+  );
+  assert.equal(consoleAuthOf({ metadata: { email: "   " } }).username, undefined);
+  assert.equal(consoleAuthOf(undefined).username, undefined);
 });

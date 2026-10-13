@@ -255,7 +255,13 @@ export async function SenseNovaPlugin({ client } = {}, options = {}) {
             },
             {
               type: "text",
-              key: "username",
+              // `email` rather than `username`: Magpie names an account from
+              // `accountId`, then `metadata.email`, then `email`, and only
+              // otherwise labels it by the credential. A prompt's key is what
+              // lands in `metadata`, so naming the field `email` is what makes
+              // the account row read as the account instead of "API key …HohJ".
+              // Reading it back is `consoleAuthOf`'s job.
+              key: "email",
               message: t.promptAccount,
               placeholder: t.placeholderAccount,
             },
@@ -272,19 +278,16 @@ export async function SenseNovaPlugin({ client } = {}, options = {}) {
               throw new Error(t.keyRequired);
             }
             /**
-             * Name the account after the account, not the key.
+             * Nothing to name the account with here beyond the key.
              *
-             * Magpie names an account from `accountId` first, and only falls
-             * back to labelling it by the credential — "API key …HohJ" — when
-             * there is nothing else. The name has to be set here, at sign-in:
-             * `usage.user` is not what the account row reads (verified — a
-             * `user` returned by the hook lands in the quota cache while the row
-             * still renders the login-time label). A sign-in that supplied no
-             * account deliberately omits `accountId`, which is what keeps
-             * Magpie's API-key fallback for that case.
+             * The account field is prompted under the key `email`, so its answer
+             * reaches Magpie's naming rule through `metadata.email` on its own —
+             * measured. Returning `accountId` or a `metadata` object from here
+             * does not help: `accountId` is documented for oauth results and was
+             * observed to do nothing for an api-type method, and a returned
+             * `metadata` is replaced by the prompt answers before it is stored.
              */
-            const account = typeof inputs?.username === "string" ? inputs.username.trim() : "";
-            return { type: "success", key, ...(account ? { accountId: account } : {}) };
+            return { type: "success", key };
           },
         },
       ],
