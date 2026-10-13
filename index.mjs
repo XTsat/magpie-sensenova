@@ -1,0 +1,265 @@
+/**
+ * SenseNova (商量 / 日日新) provider plugin for Magpie.
+ *
+ * Two things in one package, because the platform splits them across two hosts:
+ *
+ *   - **The provider.** Token Plan speaks the OpenAI dialect at
+ *     `https://token.sensenova.cn/v1`, so serving requests is the ordinary
+ *     `@ai-sdk/openai-compatible` path and the `fetch` hook forwards untouched.
+ *
+ *   - **The quota.** The 积分额度 that the console shows lives on a different
+ *     API entirely — `platform.sensenova.cn/lite/console/v1/tokenplan/pool-usage`
+ *     — behind an OAuth bearer token, not an API key. No API-key-accessible
+ *     quota endpoint exists on this platform, so the two credentials are
+ *     genuinely separate and both are collected at sign-in.
+ *
+ * The quota is reported through `auth.usage`, which is the only channel Magpie
+ * offers: plugins cannot add panels or pages, and nothing feeds the 用量概览
+ * analytics page. What `auth.usage` returns is rendered on the provider's
+ * account row, in `magpie quota`, and at the gateway's `GET /v1/magpie/quotas`.
+ *
+ * This file exports **exactly one function, and nothing else**, so the module
+ * also loads under OpenCode, which refuses an entry exporting any non-function
+ * value. Helpers live in `internal.mjs`, `quota.mjs` and `models.mjs`.
+ *
+ * @module magpie-sensenova
+ */
+
+import { PROVIDER, ICON, apiKeyOf, consoleAuthOf, fellBack, normalizeKey, readAuth } from "./internal.mjs";
+import { FALLBACK_MODELS, NPM, createCatalog, toConfigModel, toProviderModel } from "./models.mjs";
+import { QuotaError, readCredentials, readQuota, writeCredentials } from "./quota.mjs";
+
+const DEFAULT_QUOTA_TTL_MS = 60_000;
+
+/**
+ * Build the plugin.
+ *
+ * @param {{client?: object}} input - the plugin input the host passes.
+ * @param {object} [options] - the `options` field from `plugins.json`.
+ * @returns {Promise<object>} the hooks the host calls.
+ */
+export async function SenseNovaPlugin({ client } = {}, options = {}) {
+  const opts = {
+    baseURL: options.baseURL ?? undefined,
+    quotaTtlMs: Number(options.quotaTtlMs) > 0 ? Number(options.quotaTtlMs) : DEFAULT_QUOTA_TTL_MS,
+    scopeModel: typeof options.scopeModel === "string" ? options.scopeModel : "flash-lite",
+    credentialsFile: options.credentialsFile ?? undefined,
+  };
+  const catalog = createCatalog({ baseURL: opts.baseURL });
+
+  const log = (level, message) => {
+    try {
+      client?.app?.log?.({ body: { service: "sensenova", level, message } });
+    } catch {
+      /* the host's logger is best-effort */
+    }
+  };
+
+  const seedModels = () => catalog.peek() ?? FALLBACK_MODELS;
+  const modelsAsConfig = (models) =>
+    Object.fromEntries(models.map((m) => [m.id, toConfigModel(m)]));
+
+  /**
+   * The credential pair for one account.
+   *
+   * The console credentials come from the sign-in prompts when the user
+   * supplied them, and otherwise from the file the `snquota` CLI writes. The
+   * fallback matters because the console login is a multi-step OAuth flow that
+   * the CLI already drives, including keeping the token fresh; asking for the
+   * same account twice would be worse than reusing that file.
+   */
+  const credentialsFor = (auth) => {
+    const fromAuth = consoleAuthOf(auth);
+    const fromFile = readCredentials(opts.credentialsFile) ?? {};
+    return {
+      base: fromFile.base,
+      client_id: fromFile.client_id,
+      redirect_uri: fromFile.redirect_uri,
+      access_token: fromFile.access_token,
+      refresh_token: fromFile.refresh_token,
+      expires_at: fromFile.expires_at,
+      cookie: fromAuth.cookie ?? fromFile.cookie,
+      username: fromAuth.username ?? fromFile.username,
+      password: fromAuth.password ?? fromFile.password,
+      iam_base: fromAuth.iamBase ?? fromFile.iam_base,
+      // Only the file is written back: a token minted here would otherwise
+      // silently replace the CLI's copy on the next read.
+      __writable: !fromAuth.username && !fromAuth.cookie,
+      __file: opts.credentialsFile,
+    };
+  };
+
+  /** Cache quota per account so a polled hook costs one request a minute. */
+  const quotaCache = new Map();
+
+  const quotaFor = async (getAuth) => {
+    const auth = await readAuth(getAuth);
+    const cacheKey = apiKeyOf(auth) ?? consoleAuthOf(auth).username ?? "sensenova";
+    const hit = quotaCache.get(cacheKey);
+    if (hit && Date.now() - hit.at < opts.quotaTtlMs) return hit.value;
+
+    const cfg = credentialsFor(auth);
+    if (!cfg.access_token && !cfg.refresh_token && !cfg.cookie && !cfg.password) {
+      const value = {
+        error: "没有可用于读取额度的 SenseNova 账号。在插件里补填账号密码，或先运行 snquota login。",
+      };
+      quotaCache.set(cacheKey, { at: Date.now(), value });
+      return value;
+    }
+
+    try {
+      const { quota, changed } = await readQuota(cfg, { scopeModel: opts.scopeModel });
+      if (changed && cfg.__writable) writeCredentials(cfg, cfg.__file);
+      // 套餐名用接口给的（实际是 "Free Plan"），拿不到才退回通用叫法。
+      const { plan, ...rest } = quota;
+      const value = {
+        plan: plan ?? "Token Plan",
+        ...(cfg.username ? { user: cfg.username } : {}),
+        ...rest,
+      };
+      quotaCache.set(cacheKey, { at: Date.now(), value });
+      return value;
+    } catch (error) {
+      // A failed read must not be cached for the full TTL: the next poll is
+      // exactly when a token that just expired should be retried.
+      const value = {
+        plan: "Token Plan",
+        ...(cfg.username ? { user: cfg.username } : {}),
+        error: error instanceof QuotaError ? error.message : `读取额度失败: ${error.message}`,
+      };
+      quotaCache.set(cacheKey, { at: Date.now() - opts.quotaTtlMs + 15_000, value });
+      log("warn", `sensenova: quota read failed: ${error.message}`);
+      return value;
+    }
+  };
+
+  return {
+    /** Declare the provider and its models. */
+    config: async (cfg) => {
+      cfg.provider ??= {};
+      const was = cfg.provider[PROVIDER] ?? {};
+      cfg.provider[PROVIDER] = {
+        name: "SenseNova",
+        npm: NPM,
+        api: opts.baseURL ?? "https://token.sensenova.cn/v1",
+        ...was,
+        models: { ...modelsAsConfig(seedModels()), ...(was.models ?? {}) },
+      };
+    },
+
+    provider: {
+      id: PROVIDER,
+      /**
+       * The models this account can actually use.
+       *
+       * Returning the declared list unchanged on failure keeps the provider
+       * usable: Magpie marks it as fallen back rather than letting it vanish.
+       */
+      async models(provider, { auth } = {}) {
+        const id = provider?.id ?? PROVIDER;
+        const declared = provider?.models ?? modelsAsConfig(seedModels());
+        const key = apiKeyOf(auth);
+        if (!key) return fellBack(declared);
+        try {
+          const live = await catalog.load(key);
+          if (!live.length) return fellBack(declared);
+          return Object.fromEntries(
+            live.map((m) => [
+              m.id,
+              toProviderModel(m, id, { baseURL: opts.baseURL ?? catalog.baseURL }),
+            ])
+          );
+        } catch (error) {
+          log("warn", `sensenova: keeping the known model list: ${error.message}`);
+          return fellBack(declared);
+        }
+      },
+    },
+
+    auth: {
+      provider: PROVIDER,
+      ...(ICON === undefined ? {} : { icon: ICON }),
+
+      /**
+       * The account, resolved into request routing.
+       *
+       * There is no body repair here — unlike a gateway that rejects an empty
+       * `tools` array, Token Plan accepts the OpenAI shapes as sent.
+       */
+      async loader(getAuth) {
+        const key = apiKeyOf(await readAuth(getAuth));
+        return {
+          baseURL: opts.baseURL ?? "https://token.sensenova.cn/v1",
+          apiKey: key,
+          async fetch(input, init) {
+            // Re-read per request so a sign-in that changes mid-session is
+            // picked up without waiting for the loader to re-run.
+            const current = apiKeyOf(await readAuth(getAuth));
+            const request = input instanceof Request ? input : null;
+            const headers = new Headers(init?.headers ?? request?.headers);
+            if (current === undefined) headers.delete("authorization");
+            else headers.set("authorization", `Bearer ${current}`);
+            return fetch(request !== null ? request.url : input, {
+              ...init,
+              headers,
+              method: init?.method ?? request?.method,
+            });
+          },
+        };
+      },
+
+      /**
+       * The 积分额度, as the provider card shows it.
+       *
+       * SenseNova's pools map onto Magpie's window model directly: the 5-hour
+       * window is 18000 seconds, the weekly one 604800, and the Flash-Lite pool
+       * is scoped to its own model family. The 活动固定积分 balance has no
+       * window, so it is reported as `balance`.
+       */
+      async usage(getAuth) {
+        return quotaFor(getAuth);
+      },
+
+      /**
+       * One method: an API key, plus the console account that can read quota.
+       *
+       * The console fields are optional and only asked for once, at sign-in,
+       * because the quota endpoint has no API-key path. Leaving them blank
+       * falls back to whatever `snquota` already stored on this machine.
+       */
+      methods: [
+        {
+          type: "api",
+          label: "SenseNova API key",
+          prompts: [
+            {
+              type: "text",
+              key: "key",
+              message: "SenseNova API Key（控制台 → API-Key 管理）",
+              placeholder: "sk-…",
+            },
+            {
+              type: "text",
+              key: "username",
+              message: "可选：SenseNova 账号，用来读取控制台积分额度（留空则读 snquota 已存的凭据）",
+              placeholder: "手机号 / 邮箱",
+            },
+            {
+              type: "text",
+              key: "password",
+              message: "可选：账号密码（明文保存在本机 plugin-auth.json，仅用于读取额度）",
+              placeholder: "留空 = 不保存密码",
+            },
+          ],
+          async authorize(inputs) {
+            const key = normalizeKey(inputs?.key);
+            if (!key) {
+              throw new Error("SenseNova API Key 不能为空：没有它这个供应商无法发出任何请求。");
+            }
+            return { type: "success", key };
+          },
+        },
+      ],
+    },
+  };
+}
