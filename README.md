@@ -261,6 +261,45 @@ snquota login --username 你的账号 --password 你的密码 --save-password
 
 ---
 
+## 作为插件分发（提交到 GitHub 之后）
+
+仓库推到 GitHub 还不会自动出现在 Magpie 里。按官方文档，插件通过三条路被发现，可以只走一条：
+
+**1. GitHub topic（最省事）**
+
+给仓库打上 `magpie-plugin` 这个 topic，就会出现在 Magpie 的 Plugins → Discover → **unofficial plugins** 里，按 star 排序，并标注为「未审核」。要求：
+
+- `package.json` 必须在**仓库根目录**（本仓库满足）。
+- 如果同时发布到了 npm 且 `repository` 指向该仓库，安装走 npm；否则直接装仓库当前代码，所以**加载的文件必须已提交**（本仓库是纯源码，没有构建产物，满足）。
+- fork、归档仓库、`magpie-community` 自己的仓库会被排除。
+- GitHub 最多每 10 分钟轮询一次，打完 topic 几分钟内可见。
+
+**2. npm**
+
+插件浏览器会拿关键词 `<关键词> opencode` 去搜 npm，命中条件是包名或 keywords 里**同时**含有 `opencode` 和 auth / plugin / provider 之一。本仓库的 keywords 已经带上了 `opencode`、`opencode-plugin`、`opencode-auth`，满足条件。普通插件**不要求任何 scope**，`@magpie-community/` 只用于收进官方社区仓库的包。
+
+**3. 进推荐列表（`registry.json`）**
+
+向社区仓库提 PR，在 `registry.json` 里加一条：
+
+```json
+{
+  "package": "magpie-sensenova",
+  "name": "SenseNova",
+  "icon": "https://platform.sensenova.cn/favicon.ico",
+  "providers": ["sensenova"],
+  "summary": "商量/日日新 Token Plan 模型，并把控制台积分额度上报成原生额度窗口"
+}
+```
+
+这个列表最多每 6 小时拉一次，Magpie 内置了一份快照作为兜底。也可以用 `MAGPIE_PLUGIN_MARKET=<url>` 换成自己的列表（`off` 表示用内置的）。
+
+> 想让插件自动跟随更新（推新版本就自动发到所有 Magpie），得走社区包路线：在 `magpie-community/plugins` 的 `packages/<name>` 下贡献，供应商包命名为 `@magpie-community/opencode-sensenova-auth`，并且尽量避免运行时依赖。本仓库目前**零依赖**，迁过去不需要改代码。
+
+**当前状态**：本地仓库已提交，尚未推送到 GitHub、未发布到 npm、未打 topic。`repository` / `homepage` / `bugs` 三个字段都已按 `aqiu817/magpie-sensenova` 填好，推送后即可直接使用。
+
+---
+
 ## 开发
 
 ```bash
