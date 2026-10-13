@@ -271,7 +271,20 @@ export async function SenseNovaPlugin({ client } = {}, options = {}) {
             if (!key) {
               throw new Error(t.keyRequired);
             }
-            return { type: "success", key };
+            /**
+             * Name the account after the account, not the key.
+             *
+             * Magpie names an account from `accountId` first, and only falls
+             * back to labelling it by the credential — "API key …HohJ" — when
+             * there is nothing else. The name has to be set here, at sign-in:
+             * `usage.user` is not what the account row reads (verified — a
+             * `user` returned by the hook lands in the quota cache while the row
+             * still renders the login-time label). A sign-in that supplied no
+             * account deliberately omits `accountId`, which is what keeps
+             * Magpie's API-key fallback for that case.
+             */
+            const account = typeof inputs?.username === "string" ? inputs.username.trim() : "";
+            return { type: "success", key, ...(account ? { accountId: account } : {}) };
           },
         },
       ],

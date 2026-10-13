@@ -164,3 +164,29 @@ test("两者都没有时不设 user，交给 Magpie 退回显示 API Key", async
   const usage = await usageWith({ locale: "en" }, { token: "opaque" });
   assert.equal("user" in usage, false);
 });
+
+test("authorize 把填写的账号作为 accountId 返回，账号行才不显示 API Key", async () => {
+  // Magpie 依次用 accountId、metadata.email、email 给账号命名；没有这些才退回
+  // 「API key …尾4位」。所以想改账号行，只能在这里给 accountId —— usage.user
+  // 不参与命名（实测：hook 返回的 user 落进额度缓存，账号行仍渲染登录期的标签）。
+  const plugin = await SenseNovaPlugin({}, {});
+  const method = plugin.auth.methods[0];
+  assert.deepEqual(await method.authorize({ key: "sk-test", username: "13800000000" }), {
+    type: "success",
+    key: "sk-test",
+    accountId: "13800000000",
+  });
+});
+
+test("没填账号时不给 accountId，好让 Magpie 退回 API Key 标签", async () => {
+  const plugin = await SenseNovaPlugin({}, {});
+  const method = plugin.auth.methods[0];
+  const out = await method.authorize({ key: "sk-test", username: "   " });
+  assert.equal("accountId" in out, false);
+  assert.deepEqual(out, { type: "success", key: "sk-test" });
+});
+
+test("authorize 仍然拒绝空 key", async () => {
+  const plugin = await SenseNovaPlugin({}, {});
+  await assert.rejects(() => plugin.auth.methods[0].authorize({ key: "  " }), /API Key|API key/);
+});

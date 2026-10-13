@@ -12,18 +12,26 @@ sensenova  通用积分池 · 5 小时窗口   0% used ↻ 2h  ·  Flash-Lite积
 (The window labels come from the platform's pool names, passed through and translated by this plugin — see
 [`locale`](#configuration). The example above is the Chinese default.)
 
-### The account row shows the account, not the API key
+### What the account row shows
 
-Magpie labels a provider account by its API key unless the `usage` hook supplies a `user`, in which case
-it shows that instead. This plugin fills it in, preferring **the account's own display name, read from the
-console tokens** (`access_token.ext.username`, falling back to the nested `id_token.id_token.username` —
-both were observed to carry the same value, and it is the name the console's own header displays). The
-phone number or email typed at sign-in is the second choice, since that is what you logged in with rather
-than who you are.
+Magpie names an account from `accountId`, then `metadata.email`, then `email`, and only when none of those
+exist does it fall back to labelling the account by the credential — the `API key …HohJ` you may have seen.
 
-This matters most in the case where you supplied **only an API key**: a console token gets minted anyway,
-so the row can still show a name. Only when there is neither a token nor a typed account does the row fall
-back to labelling the account by its API key.
+So the label is fixed **at sign-in**, from what you type there: fill in the account field and the row shows
+that phone number or email; leave it blank and the row keeps Magpie's API-key fallback. That is exactly what
+this plugin does — `authorize` returns `accountId` when an account was supplied and omits it otherwise.
+
+It has to be done there rather than in the `usage` hook, which is worth knowing if you are writing a plugin:
+**`usage.user` does not rename the account row.** This was measured, not assumed. A `user` returned by the
+hook is stored in Magpie's quota cache (`quotas.json` → `quota.user`) while the row and `magpie quota` keep
+rendering the login-time label; the cache key stays `sensenova/api key …hohj` either way.
+
+The token's own display name is still reported as `user` (see
+[the security notice](#1-what-is-stored-and-where) on where it is read from), because it is the vendor-side
+account name and Magpie documents the field. It is simply not what labels the row.
+
+**If you signed in before this behaviour existed**, your stored label is still the API-key one. Re-run
+`magpie plugin login sensenova` to set it.
 
 ---
 
@@ -532,7 +540,7 @@ work as soon as it is pushed.
 node --test test/*.test.mjs
 ```
 
-50 tests cover: mapping pools to windows (including the `used` percentage, `amount`, `limit`, `span`,
+53 tests cover: mapping pools to windows (including the `used` percentage, `amount`, `limit`, `span`,
 `resetsAt`, the dedicated pool's model scoping, and the granted balance); that `limit - amount`
 reproduces the console balance; that a window with an unknown usage is skipped rather than reported as
 zero; degradation when fields are missing; JWT expiry; refresh-token renewal; the error raised when
@@ -540,5 +548,5 @@ there are no credentials; the `fetch` hook preserving the body and headers for b
 `Request` inputs; that internal `__`-prefixed keys never reach the credentials file; both envelopes for
 model normalization; locale resolution (explicit, OS, environment, and POSIX `C`); that the two string
 tables stay in step; that the shared pool is not run through the dedicated-pool naming rule; that
-`accountNameOf` reads the token and yields nothing rather than inventing a name; and the `usage` hook
-end to end in both languages.
+`accountNameOf` reads the token and yields nothing rather than inventing a name; that `authorize` sets
+`accountId` only when an account was given; and the `usage` hook end to end in both languages.
