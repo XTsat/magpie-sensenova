@@ -21,11 +21,12 @@ Two of the three are **not** public APIs:
 
 - `https://token.sensenova.cn/v1` — the Token Plan's OpenAI-compatible API.
   This is the documented, intended way to call the models.
-- `https://platform.sensenova.cn/lite/console/v1/tokenplan/pool-usage` — the
-  endpoint the SenseNova **console's own frontend** calls to draw its 积分额度
-  panel. It is internal, undocumented, and may change or disappear without
-  notice. It is used here because the platform publishes no
-  API-key-accessible quota endpoint at all (every candidate path answers 404).
+- An endpoint on `https://platform.sensenova.cn` — the one the SenseNova
+  **console's own frontend** calls to draw its 积分额度 panel. It is internal,
+  undocumented, and may change or disappear without notice. It is used here
+  because the platform publishes no API-key-accessible quota endpoint at all
+  (every candidate path answers 404). Its path is deliberately not written
+  down in this file; it is in `quota.mjs`.
 - `https://iam.sensecoreapi.cn/iam/authn/…` — the platform's IAM login service,
   used the same way the console's login page uses it, to renew the console
   token that the quota endpoint requires.
