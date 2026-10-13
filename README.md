@@ -528,9 +528,8 @@ That list is fetched at most every six hours, and Magpie ships a built-in copy a
 > package `@magpie-community/opencode-sensenova-auth`, and avoid runtime dependencies where possible.
 > This repository currently has **zero dependencies**, so moving it there needs no code changes.
 
-**Current status**: committed locally, not yet pushed to GitHub, not published to npm, no topic set. The
-`repository` / `homepage` / `bugs` fields are already filled in as `aqiu817/magpie-sensenova`, so they
-work as soon as it is pushed.
+The `repository` / `homepage` / `bugs` fields in `package.json` already point at
+`aqiu817/magpie-sensenova`, so all three routes above work as soon as the repository is pushed.
 
 ---
 
