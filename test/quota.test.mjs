@@ -5,7 +5,9 @@ import os from "node:os";
 import path from "node:path";
 
 import { extractModels, normalizeModel, toConfigModel, toProviderModel } from "../models.mjs";
+import { strings } from "../i18n.mjs";
 import {
+  accountNameOf,
   compact,
   ensureToken,
   fmtNum,
@@ -16,6 +18,9 @@ import {
   QuotaError,
   writeCredentials,
 } from "../quota.mjs";
+
+/** 造一个解码得动的 JWT：只需要中间那段载荷是真的。 */
+const jwt = (payload) => `x.${Buffer.from(JSON.stringify(payload)).toString("base64url")}.y`;
 
 /** 与控制台截图一致的样例数据。 */
 const POOLS = [
@@ -258,4 +263,47 @@ test("writeCredentials 不把 __ 开头的内部字段写进文件", () => {
   assert.deepEqual(Object.keys(back).sort(), ["access_token", "refresh_token", "saved_at", "username"]);
   assert.equal("__writable" in back, false, "内部标记泄漏会让 CLI 的文件多出无意义字段");
   fs.rmSync(path.dirname(file), { recursive: true, force: true });
+});
+
+test("英文表下窗口标签与单位跟着变，数字不变", () => {
+  const en = strings("en");
+  const { windows, balance } = toQuota(POOLS, { strings: en });
+  assert.deepEqual(
+    windows.map((w) => w.name),
+    ["General Pool · 5h window", "General Pool · This week", "Flash-Lite Dedicated Pool · 5h window", "Flash-Lite Dedicated Pool · This week"]
+  );
+  assert.equal(windows[0].unit, "credits");
+  assert.equal(balance, "1,292,155,358 credits");
+  // 语言只该改文案，不该动数字
+  const zh = toQuota(POOLS);
+  assert.deepEqual(windows.map((w) => w.amount), zh.windows.map((w) => w.amount));
+  assert.deepEqual(windows.map((w) => w.limit), zh.windows.map((w) => w.limit));
+  assert.deepEqual(windows.map((w) => w.used), zh.windows.map((w) => w.used));
+});
+
+test("accountNameOf 从 access_token.ext.username 取账号名", () => {
+  const cfg = { access_token: jwt({ ext: { username: "Ada" } }) };
+  assert.equal(accountNameOf(cfg), "Ada");
+});
+
+test("accountNameOf 退回 id_token 里那个嵌套的 username", () => {
+  const cfg = { id_token: jwt({ id_token: { username: "Ada" } }) };
+  assert.equal(accountNameOf(cfg), "Ada");
+});
+
+test("accountNameOf 优先用 access_token 里的，并去空白", () => {
+  const cfg = {
+    access_token: jwt({ ext: { username: "  Ada  " } }),
+    id_token: jwt({ id_token: { username: "Someone Else" } }),
+  };
+  assert.equal(accountNameOf(cfg), "Ada");
+});
+
+test("accountNameOf 取不到时返回 undefined，不编一个", () => {
+  // 只填了 API Key 的账号就是这种情形：Magpie 会退回显示 API Key 后缀。
+  assert.equal(accountNameOf({}), undefined);
+  assert.equal(accountNameOf({ access_token: "opaque-token" }), undefined, "不透明 token 不该崩");
+  assert.equal(accountNameOf({ access_token: jwt({ ext: {} }) }), undefined);
+  assert.equal(accountNameOf({ access_token: jwt({ ext: { username: "   " } }) }), undefined);
+  assert.equal(accountNameOf(undefined), undefined);
 });

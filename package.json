@@ -12,6 +12,7 @@
     "internal.mjs",
     "quota.mjs",
     "models.mjs",
+    "i18n.mjs",
     "assets/",
     "README.md",
     "NOTICE.md",

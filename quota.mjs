@@ -28,6 +28,8 @@ import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
 
+import { fill, poolLabel, strings as tableFor } from "./i18n.mjs";
+
 const DEFAULT_BASE = "https://platform.sensenova.cn";
 const DEFAULT_CLIENT_ID = "nova";
 
@@ -60,6 +62,28 @@ export function parseJwt(token) {
   } catch {
     return null;
   }
+}
+
+/**
+ * 账号自己的名字，直接从控制台 token 里读。
+ *
+ * 两个 token 都带它：`access_token.ext.username`，以及 id_token 里那个嵌套的
+ * `id_token.id_token.username`（后者还带 user_avatar / user_id / login_type）。
+ * 实测两者取到的值相同。控制台头部显示的就是这个名字，所以它才是用户认得的
+ * 那个标识 —— 而登录时填的账号可能是手机号或邮箱，是另一回事。
+ *
+ * 在这里读的好处是：**只填了 API Key、没填账号密码的情况下也能拿到名字**，
+ * 于是账号行不必退化成显示 API Key 后缀。
+ *
+ * @param {object} cfg - 凭据（含 access_token / id_token）。
+ * @returns {string|undefined}
+ */
+export function accountNameOf(cfg) {
+  const pick = (v) => (typeof v === "string" && v.trim() ? v.trim() : undefined);
+  return (
+    pick(parseJwt(cfg?.access_token)?.ext?.username) ??
+    pick(parseJwt(cfg?.id_token)?.id_token?.username)
+  );
 }
 
 /** 与控制台一致的数字格式：千分位 + 最多 6 位小数。 */
@@ -229,7 +253,7 @@ export class QuotaError extends Error {
   }
 }
 
-async function refreshWithRefreshToken(cfg, fetchImpl) {
+async function refreshWithRefreshToken(cfg, fetchImpl, t) {
   const { res, data, text } = await postToken(
     cfg,
     {
@@ -241,7 +265,7 @@ async function refreshWithRefreshToken(cfg, fetchImpl) {
   );
   if (!res.ok || !data?.access_token) {
     const detail = data?.error_description || data?.error || text.slice(0, 200);
-    throw new QuotaError(`refresh_token 续期失败: ${detail}`);
+    throw new QuotaError(fill(t.refreshFailed, { detail }));
   }
   applyToken(cfg, data);
 }
@@ -263,7 +287,7 @@ function buildAuthorize(cfg) {
   return { url, verifier, redirectUri };
 }
 
-async function exchangeCode(cfg, { code, verifier, redirectUri }, fetchImpl) {
+async function exchangeCode(cfg, { code, verifier, redirectUri }, fetchImpl, t) {
   const { res, data, text } = await postToken(
     cfg,
     {
@@ -277,7 +301,7 @@ async function exchangeCode(cfg, { code, verifier, redirectUri }, fetchImpl) {
   );
   if (!res.ok || !data?.access_token) {
     const detail = data?.error_description || data?.error || text.slice(0, 200);
-    throw new QuotaError(`用授权码换令牌失败: ${detail}`);
+    throw new QuotaError(fill(t.exchangeFailed, { detail }));
   }
   applyToken(cfg, data);
 }
@@ -300,22 +324,22 @@ const codeOf = (location) => {
   }
 };
 
-async function renewWithCookie(cfg, fetchImpl) {
+async function renewWithCookie(cfg, fetchImpl, t) {
   const { url, verifier, redirectUri } = buildAuthorize(cfg);
   const jar = new CookieJar(cfg.cookie);
   const res = await hop(url, jar, fetchImpl, { headers: { Accept: "text/html" } });
   const location = res.headers.get("location") || "";
   if (/login_challenge=/.test(location)) {
-    throw new QuotaError("会话 cookie 已失效，请重新导出或用账号密码登录");
+    throw new QuotaError(t.cookieDead);
   }
   const code = codeOf(location);
   if (!code) {
-    throw new QuotaError(`授权端点没有返回授权码（HTTP ${res.status}）`);
+    throw new QuotaError(fill(t.noAuthCode, { status: res.status }));
   }
-  await exchangeCode(cfg, { code, verifier, redirectUri }, fetchImpl);
+  await exchangeCode(cfg, { code, verifier, redirectUri }, fetchImpl, t);
 }
 
-async function renewWithPassword(cfg, fetchImpl) {
+async function renewWithPassword(cfg, fetchImpl, t) {
   const { url, verifier, redirectUri } = buildAuthorize(cfg);
   const jar = new CookieJar(cfg.cookie);
   const iam =
@@ -326,10 +350,10 @@ async function renewWithPassword(cfg, fetchImpl) {
   const res = await hop(url, jar, fetchImpl, { headers: { Accept: "text/html" } });
   const location = res.headers.get("location") || "";
   let code = codeOf(location);
-  if (code) return exchangeCode(cfg, { code, verifier, redirectUri }, fetchImpl);
+  if (code) return exchangeCode(cfg, { code, verifier, redirectUri }, fetchImpl, t);
 
   const challenge = /login_challenge=([^&\s]+)/.exec(location)?.[1];
-  if (!challenge) throw new QuotaError(`授权端点没有返回 login_challenge（HTTP ${res.status}）`);
+  if (!challenge) throw new QuotaError(fill(t.noChallenge, { status: res.status }));
 
   const checkRes = await hop(
     `${iam}/v1/auth/checkChallenge?challenge=${encodeURIComponent(challenge)}`,
@@ -338,7 +362,7 @@ async function renewWithPassword(cfg, fetchImpl) {
     { headers: { Accept: "application/json" } }
   );
   const check = await checkRes.json().catch(() => null);
-  if (!check?.is_valid) throw new QuotaError("login_challenge 已失效，请重试");
+  if (!check?.is_valid) throw new QuotaError(t.challengeExpired);
 
   const loginRes = await hop(`${iam}/v1/auth/nova/login`, jar, fetchImpl, {
     method: "POST",
@@ -359,43 +383,46 @@ async function renewWithPassword(cfg, fetchImpl) {
   if (!loginRes.ok) {
     const reason = loginData?.details?.find?.((d) => typeof d?.reason === "string")?.reason;
     const map = {
-      invalidAccountOrPassword: "账号或密码不正确",
-      IncorrectPassword: "密码不正确",
-      NotFound: "账号不存在",
-      LoginLocked: "账号被锁定",
-      PermissionDenied: "该账号没有权限",
-      OperationTooFrequently: "操作过于频繁",
+      invalidAccountOrPassword: t.loginInvalidAccount,
+      IncorrectPassword: t.loginBadPassword,
+      NotFound: t.loginNoAccount,
+      LoginLocked: t.loginLocked,
+      PermissionDenied: t.loginNoPermission,
+      OperationTooFrequently: t.loginTooFrequent,
     };
-    throw new QuotaError(map[reason] || `登录被拒绝（HTTP ${loginRes.status}）`);
+    throw new QuotaError(map[reason] || fill(t.loginRejected, { status: loginRes.status }));
   }
   const next = typeof loginData?.redirect === "string" ? loginData.redirect.trim() : "";
-  if (!next) throw new QuotaError("登录接口没有返回 redirect");
+  if (!next) throw new QuotaError(t.noRedirect);
 
   // 跟着跳转链走，直到某一跳的 Location 里出现授权码
   let url2 = next;
   for (let i = 0; i < 10; i++) {
     const r = await hop(url2, jar, fetchImpl, { headers: { Accept: "text/html,application/json" } });
     const loc = r.headers.get("location");
-    if (!loc) throw new QuotaError(`登录跳转链在 ${String(url2).slice(0, 100)} 停住了`);
+    if (!loc) throw new QuotaError(fill(t.chainStuck, { where: String(url2).slice(0, 100) }));
     const abs = new URL(loc, url2).href;
     const found = codeOf(abs);
-    if (found) return exchangeCode(cfg, { code: found, verifier, redirectUri }, fetchImpl);
-    if (/login_challenge=/.test(abs)) throw new QuotaError("登录后又被踢回登录页，账号密码可能不对");
+    if (found) return exchangeCode(cfg, { code: found, verifier, redirectUri }, fetchImpl, t);
+    if (/login_challenge=/.test(abs)) throw new QuotaError(t.bouncedToLogin);
     url2 = abs;
   }
-  throw new QuotaError("登录跳转次数超出上限");
+  throw new QuotaError(t.chainTooLong);
 }
 
 /**
  * 保证 cfg.access_token 可用，必要时续期。
  *
+ * @param {object} cfg - 凭据，会被就地更新。
+ * @param {{fetchImpl?: Function, now?: number, strings?: object}} [opts] - strings 决定错误信息的语言。
  * @returns {Promise<boolean>} 是否更新过凭据（需要写回文件）。
  */
-export async function ensureToken(cfg, { fetchImpl = fetch, now = Date.now() } = {}) {
+export async function ensureToken(cfg, { fetchImpl = fetch, now = Date.now(), strings } = {}) {
+  const t = strings ?? tableFor("zh");
   if (cfg.access_token && !isExpired(cfg, now)) return false;
   if (cfg.refresh_token) {
     try {
-      await refreshWithRefreshToken(cfg, fetchImpl);
+      await refreshWithRefreshToken(cfg, fetchImpl, t);
       return true;
     } catch (e) {
       if (!cfg.cookie && !cfg.password) throw e;
@@ -403,19 +430,17 @@ export async function ensureToken(cfg, { fetchImpl = fetch, now = Date.now() } =
   }
   if (cfg.cookie) {
     try {
-      await renewWithCookie(cfg, fetchImpl);
+      await renewWithCookie(cfg, fetchImpl, t);
       return true;
     } catch (e) {
       if (!cfg.password) throw e;
     }
   }
   if (cfg.username && cfg.password) {
-    await renewWithPassword(cfg, fetchImpl);
+    await renewWithPassword(cfg, fetchImpl, t);
     return true;
   }
-  throw new QuotaError(
-    "access_token 已过期，且没有 refresh_token / 会话 cookie / 账号密码可用。请运行 snquota login 重新登录。"
-  );
+  throw new QuotaError(t.noRenewalPath);
 }
 
 /* ------------------------------------------------------------------ 取数 */
@@ -430,14 +455,16 @@ export async function ensureToken(cfg, { fetchImpl = fetch, now = Date.now() } =
  * （控制台横幅原话：「同账户所有 Key 共享」）。按 Key 的拆分只存在于「使用明细」
  * 里，那是逐条调用记录，不是额度。
  */
-export async function fetchPoolUsage(cfg, { fetchImpl = fetch } = {}) {
+export async function fetchPoolUsage(cfg, { fetchImpl = fetch, strings } = {}) {
+  const t = strings ?? tableFor("zh");
   const base = (cfg.base || DEFAULT_BASE).replace(/\/$/, "");
   const url = `${base}/lite/console/v1/tokenplan/pool-usage`;
   const res = await fetchImpl(url, {
     headers: {
       Authorization: `Bearer ${cfg.access_token}`,
       Accept: "application/json",
-      "Accept-Language": "zh-CN",
+      // 实测这个头目前不影响返回（池名恒为中文），但声明真实语言总比谎报 zh-CN 好。
+      "Accept-Language": t.locale === "en" ? "en-US" : "zh-CN",
     },
   });
   const text = await res.text();
@@ -449,7 +476,7 @@ export async function fetchPoolUsage(cfg, { fetchImpl = fetch } = {}) {
   }
   if (!res.ok) {
     const reason = data?.details?.find?.((d) => typeof d?.message === "string")?.message;
-    throw new QuotaError(`读取额度失败 HTTP ${res.status}${reason ? ` ${reason}` : ""}`);
+    throw new QuotaError(`${fill(t.quotaHttp, { status: res.status })}${reason ? ` ${reason}` : ""}`);
   }
   return {
     plan: data?.plan ?? null,
@@ -478,7 +505,7 @@ export async function fetchPoolUsage(cfg, { fetchImpl = fetch } = {}) {
  * workbuddy / zcode 两个社区插件的实现里对出来的。
  *
  * @param {{plan?: object, pools?: Array<object>}|Array<object>} usage - fetchPoolUsage 的结果（或裸 pools 数组）。
- * @param {{scopeModel?: string}} [opts]
+ * @param {{scopeModel?: string, strings?: object}} [opts] - strings 决定标签与单位的语言。
  * @returns {{plan?: string, windows: Array<object>, balance?: string}}
  */
 export function toQuota(usage, opts = {}) {
@@ -487,10 +514,11 @@ export function toQuota(usage, opts = {}) {
   const windows = [];
   let balance;
   const scopeModel = opts.scopeModel ?? "flash-lite";
+  const t = opts.strings ?? tableFor("zh");
 
   for (const pool of pools || []) {
     const dedicated = pool.pool_type === "dedicated";
-    const label = dedicated ? pool.name || "专属积分池" : "通用积分池";
+    const label = poolLabel(pool.name, t, dedicated);
     const modelIds = Array.isArray(pool.model_ids) ? pool.model_ids.filter((x) => typeof x === "string") : [];
     const scope = modelIds.length
       ? { models: modelIds }
@@ -499,8 +527,8 @@ export function toQuota(usage, opts = {}) {
         : {};
 
     for (const [field, span, wname] of [
-      ["window_5h", 18000, "5 小时窗口"],
-      ["window_7d", 604800, "本周"],
+      ["window_5h", 18000, t.window5h],
+      ["window_7d", 604800, t.windowWeekly],
     ]) {
       const w = pool[field];
       if (!w) continue;
@@ -518,7 +546,7 @@ export function toQuota(usage, opts = {}) {
         used: Number(((amount / limit) * 100).toFixed(4)),
         amount,
         limit,
-        unit: "积分",
+        unit: t.unit,
         display: `${compact(amount)} / ${compact(limit)}`,
         ...(Number.isFinite(resetsAt) && resetsAt > 0 ? { resetsAt } : {}),
         span,
@@ -528,7 +556,7 @@ export function toQuota(usage, opts = {}) {
 
     const grant = Number(pool.grant_balance);
     if (!dedicated && Number.isFinite(grant) && grant > 0) {
-      balance = `${fmtNum(grant)} 积分`;
+      balance = `${fmtNum(grant)} ${t.unit}`;
     }
   }
 
@@ -544,11 +572,11 @@ export function toQuota(usage, opts = {}) {
  * 一步到位：确保 token、拉数据、映射成 quota。
  *
  * @param {object} cfg - 凭据（会被就地更新，调用方负责写回）。
- * @param {{fetchImpl?: Function, now?: number, scopeModel?: string}} [opts]
+ * @param {{fetchImpl?: Function, now?: number, scopeModel?: string, strings?: object}} [opts]
  */
 export async function readQuota(cfg, opts = {}) {
-  const { fetchImpl = fetch, now = Date.now(), scopeModel } = opts;
-  const changed = await ensureToken(cfg, { fetchImpl, now });
-  const usage = await fetchPoolUsage(cfg, { fetchImpl });
-  return { quota: toQuota(usage, { scopeModel }), changed, usage };
+  const { fetchImpl = fetch, now = Date.now(), scopeModel, strings } = opts;
+  const changed = await ensureToken(cfg, { fetchImpl, now, strings });
+  const usage = await fetchPoolUsage(cfg, { fetchImpl, strings });
+  return { quota: toQuota(usage, { scopeModel, strings }), changed, usage };
 }

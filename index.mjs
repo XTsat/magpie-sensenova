@@ -27,7 +27,8 @@
 
 import { PROVIDER, ICON, apiKeyOf, consoleAuthOf, fellBack, normalizeKey, readAuth } from "./internal.mjs";
 import { FALLBACK_MODELS, NPM, createCatalog, toConfigModel, toProviderModel } from "./models.mjs";
-import { QuotaError, readCredentials, readQuota, writeCredentials } from "./quota.mjs";
+import { accountNameOf, QuotaError, readCredentials, readQuota, writeCredentials } from "./quota.mjs";
+import { fill, resolveLocale, strings as tableFor } from "./i18n.mjs";
 
 const DEFAULT_QUOTA_TTL_MS = 60_000;
 
@@ -39,6 +40,8 @@ const DEFAULT_QUOTA_TTL_MS = 60_000;
  * @returns {Promise<object>} the hooks the host calls.
  */
 export async function SenseNovaPlugin({ client } = {}, options = {}) {
+  const locale = resolveLocale(options.locale);
+  const t = tableFor(locale);
   const opts = {
     baseURL: options.baseURL ?? undefined,
     quotaTtlMs: Number(options.quotaTtlMs) > 0 ? Number(options.quotaTtlMs) : DEFAULT_QUOTA_TTL_MS,
@@ -92,6 +95,19 @@ export async function SenseNovaPlugin({ client } = {}, options = {}) {
   /** Cache quota per account so a polled hook costs one request a minute. */
   const quotaCache = new Map();
 
+  /**
+   * What Magpie puts on the account row.
+   *
+   * Magpie shows `user` when the hook supplies it and falls back to labelling the
+   * account by its API key when it does not. The console tokens carry the
+   * account's own display name, which is the name the console's header shows and
+   * therefore the one a user recognises; the account typed at sign-in is a phone
+   * number or an email, which is what the user logged in with rather than who
+   * they are. So the token's name wins, the typed account is the fallback, and
+   * only when neither exists does Magpie fall back to the API key.
+   */
+  const accountLabel = (cfg) => accountNameOf(cfg) ?? cfg.username;
+
   const quotaFor = async (getAuth) => {
     const auth = await readAuth(getAuth);
     const cacheKey = apiKeyOf(auth) ?? consoleAuthOf(auth).username ?? "sensenova";
@@ -100,21 +116,20 @@ export async function SenseNovaPlugin({ client } = {}, options = {}) {
 
     const cfg = credentialsFor(auth);
     if (!cfg.access_token && !cfg.refresh_token && !cfg.cookie && !cfg.password) {
-      const value = {
-        error: "没有可用于读取额度的 SenseNova 账号。在插件里补填账号密码，或先运行 snquota login。",
-      };
+      const value = { error: t.noAccount };
       quotaCache.set(cacheKey, { at: Date.now(), value });
       return value;
     }
 
     try {
-      const { quota, changed } = await readQuota(cfg, { scopeModel: opts.scopeModel });
+      const { quota, changed } = await readQuota(cfg, { scopeModel: opts.scopeModel, strings: t });
       if (changed && cfg.__writable) writeCredentials(cfg, cfg.__file);
       // 套餐名用接口给的（实际是 "Free Plan"），拿不到才退回通用叫法。
       const { plan, ...rest } = quota;
+      const user = accountLabel(cfg);
       const value = {
-        plan: plan ?? "Token Plan",
-        ...(cfg.username ? { user: cfg.username } : {}),
+        plan: plan ?? t.planFallback,
+        ...(user ? { user } : {}),
         ...rest,
       };
       quotaCache.set(cacheKey, { at: Date.now(), value });
@@ -122,10 +137,11 @@ export async function SenseNovaPlugin({ client } = {}, options = {}) {
     } catch (error) {
       // A failed read must not be cached for the full TTL: the next poll is
       // exactly when a token that just expired should be retried.
+      const user = accountLabel(cfg);
       const value = {
-        plan: "Token Plan",
-        ...(cfg.username ? { user: cfg.username } : {}),
-        error: error instanceof QuotaError ? error.message : `读取额度失败: ${error.message}`,
+        plan: t.planFallback,
+        ...(user ? { user } : {}),
+        error: error instanceof QuotaError ? error.message : fill(t.readFailed, { detail: error.message }),
       };
       quotaCache.set(cacheKey, { at: Date.now() - opts.quotaTtlMs + 15_000, value });
       log("warn", `sensenova: quota read failed: ${error.message}`);
@@ -234,26 +250,26 @@ export async function SenseNovaPlugin({ client } = {}, options = {}) {
             {
               type: "text",
               key: "key",
-              message: "SenseNova API Key（控制台 → API-Key 管理）",
+              message: t.promptKey,
               placeholder: "sk-…",
             },
             {
               type: "text",
               key: "username",
-              message: "可选：SenseNova 账号，用来读取控制台积分额度（留空则读 snquota 已存的凭据）",
-              placeholder: "手机号 / 邮箱",
+              message: t.promptAccount,
+              placeholder: t.placeholderAccount,
             },
             {
               type: "text",
               key: "password",
-              message: "可选：账号密码（明文保存在本机 plugin-auth.json，仅用于读取额度）",
-              placeholder: "留空 = 不保存密码",
+              message: t.promptPassword,
+              placeholder: t.placeholderPassword,
             },
           ],
           async authorize(inputs) {
             const key = normalizeKey(inputs?.key);
             if (!key) {
-              throw new Error("SenseNova API Key 不能为空：没有它这个供应商无法发出任何请求。");
+              throw new Error(t.keyRequired);
             }
             return { type: "success", key };
           },
