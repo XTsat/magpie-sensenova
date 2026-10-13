@@ -537,28 +537,39 @@ no scope**; `@magpie-community/` is only for packages contributed into the offic
 
 **3. The recommended list (`registry.json`)**
 
-Open a PR against the community repository adding an entry:
+This one is not open to standalone packages. Checked against the live file: all 21 entries are
+`@magpie-community/*` and every one carries `"community": true`, with no exception. So being listed means
+**becoming a community package** rather than opening a PR that adds an outside package.
+
+To take that route, contribute under `packages/<name>` in `magpie-community/plugins`, naming a provider
+package `@magpie-community/opencode-sensenova-auth`, and the entry added looks like the others:
 
 ```json
 {
-  "package": "magpie-sensenova",
+  "package": "@magpie-community/opencode-sensenova-auth",
   "name": "SenseNova",
-  "icon": "https://platform.sensenova.cn/favicon.ico",
+  "icon": "sensenova",
   "providers": ["sensenova"],
-  "summary": "商量/日日新 Token Plan models, with the console's credit quota reported as native quota windows"
+  "community": true,
+  "summary": {
+    "en": "SenseNova Token Plan models, with the console's credit quota reported as native quota windows.",
+    "zh": "接入商量/日日新 Token Plan 模型，并把控制台积分额度上报成原生额度窗口。"
+  }
 }
 ```
 
-That list is fetched at most every six hours, and Magpie ships a built-in copy as a fallback.
+Note `icon` here is a short name (the entries use `opencode`, `zcode`, `qoder`…), not the URL that
+`magpie.icon` takes. Two benefits come with it: pushing a version bump to `main` publishes it, and the
+package then **auto-updates in every Magpie** instead of users re-installing. This repository has **zero
+dependencies**, so moving it there needs no code changes — but it does mean the package is developed inside
+someone else's repository, which is why it is not done here by default.
+
+The list is fetched at most every six hours, and Magpie ships a built-in copy as a fallback.
 `MAGPIE_PLUGIN_MARKET=<url>` swaps in another list (`off` means use only the built-in copy).
 
-> To have the plugin update itself — pushing a version publishes it to every Magpie — take the community
-> package route: contribute under `packages/<name>` in `magpie-community/plugins`, naming a provider
-> package `@magpie-community/opencode-sensenova-auth`, and avoid runtime dependencies where possible.
-> This repository currently has **zero dependencies**, so moving it there needs no code changes.
-
-The `repository` / `homepage` / `bugs` fields in `package.json` already point at
-`aqiu817/magpie-sensenova`, so all three routes above work as soon as the repository is pushed.
+The `repository` / `homepage` / `bugs` fields in `package.json` point at `aqiu817/magpie-sensenova`, and the
+repository carries the `magpie-plugin` topic, so it is discoverable through route 1 today. Routes 2 and 3
+are opt-in and not done.
 
 ---
 
