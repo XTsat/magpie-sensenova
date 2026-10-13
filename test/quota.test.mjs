@@ -1,8 +1,21 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 import { extractModels, normalizeModel, toConfigModel, toProviderModel } from "../models.mjs";
-import { compact, ensureToken, fmtNum, isExpired, parseJwt, toQuota, QuotaError } from "../quota.mjs";
+import {
+  compact,
+  ensureToken,
+  fmtNum,
+  isExpired,
+  parseJwt,
+  readCredentials,
+  toQuota,
+  QuotaError,
+  writeCredentials,
+} from "../quota.mjs";
 
 /** 与控制台截图一致的样例数据。 */
 const POOLS = [
@@ -208,4 +221,41 @@ test("toConfigModel / toProviderModel 形状符合 Magpie 约定", () => {
   assert.equal(provModel.api.url, "https://token.sensenova.cn/v1");
   assert.equal(provModel.capabilities.input.image, true);
   assert.equal(provModel.status, "active");
+});
+
+test("remaining 缺失时跳过窗口，而不是编造一个 0 已用", () => {
+  const { windows } = toQuota([
+    {
+      pool_type: "default",
+      // limit 有、remaining 没有：用量无从得知，不能当成 0
+      window_5h: { limit: "60000" },
+      window_7d: { remaining: "500000", limit: "600000" },
+    },
+  ]);
+  assert.equal(windows.length, 1, "只有能算出用量的窗口才上报");
+  assert.equal(windows[0].name, "通用积分池 · 本周");
+  assert.equal(windows[0].amount, 100000);
+});
+
+test("writeCredentials 不把 __ 开头的内部字段写进文件", () => {
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "snquota-")), "cfg.json");
+  // index.mjs 交给 writeCredentials 的就是这个形状：内部标记和真实凭据混在一起。
+  writeCredentials(
+    {
+      access_token: "at",
+      refresh_token: "rt",
+      username: "u",
+      __writable: true,
+      __file: undefined,
+      __transient: true,
+      __persist: true,
+      __save_password: true,
+      __path: "x",
+    },
+    file
+  );
+  const back = readCredentials(file);
+  assert.deepEqual(Object.keys(back).sort(), ["access_token", "refresh_token", "saved_at", "username"]);
+  assert.equal("__writable" in back, false, "内部标记泄漏会让 CLI 的文件多出无意义字段");
+  fs.rmSync(path.dirname(file), { recursive: true, force: true });
 });

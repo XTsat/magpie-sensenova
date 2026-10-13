@@ -99,7 +99,10 @@ export function readCredentials(file = configPath()) {
 
 export function writeCredentials(cfg, file = configPath()) {
   try {
-    const { __transient, __persist, __save_password, __path, ...rest } = cfg;
+    // Internal bookkeeping keys are all `__`-prefixed, and none of them belong
+    // in the file: the CLI reads it back, and flags like `__writable` are
+    // per-call. Strip by prefix so a new one can never leak by being forgotten.
+    const rest = Object.fromEntries(Object.entries(cfg).filter(([k]) => !k.startsWith("__")));
     fs.writeFileSync(file, `${JSON.stringify({ ...rest, saved_at: new Date().toISOString() }, null, 2)}\n`, {
       mode: 0o600,
     });
@@ -504,7 +507,11 @@ export function toQuota(usage, opts = {}) {
       const limit = Number(w.limit);
       const remaining = Number(w.remaining);
       if (!Number.isFinite(limit) || limit <= 0) continue;
-      const amount = Number.isFinite(remaining) ? Math.max(0, limit - remaining) : 0;
+      // Without `remaining` the usage is unknown, and defaulting it to 0 would
+      // put a fabricated "0 / limit" on the card — the same wrong-number failure
+      // `amount` was added to fix. Report nothing for this window instead.
+      if (!Number.isFinite(remaining)) continue;
+      const amount = Math.max(0, limit - remaining);
       const resetsAt = Number(w.reset_at);
       windows.push({
         name: `${label} · ${wname}`,
@@ -537,7 +544,7 @@ export function toQuota(usage, opts = {}) {
  * 一步到位：确保 token、拉数据、映射成 quota。
  *
  * @param {object} cfg - 凭据（会被就地更新，调用方负责写回）。
- * @param {{fetchImpl?: Function, cache?: Map, ttlMs?: number, now?: number}} [opts]
+ * @param {{fetchImpl?: Function, now?: number, scopeModel?: string}} [opts]
  */
 export async function readQuota(cfg, opts = {}) {
   const { fetchImpl = fetch, now = Date.now(), scopeModel } = opts;

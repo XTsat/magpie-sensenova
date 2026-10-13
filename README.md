@@ -1,249 +1,340 @@
 # magpie-sensenova
 
-[Magpie](https://usemagpie.ai) 的 **SenseNova（商量 / 日日新）** 供应商插件：
-把 Token Plan 的模型接进来，并把控制台里的**积分额度**上报成 Magpie 原生的额度窗口。
+A [Magpie](https://usemagpie.ai) provider plugin for **SenseNova** (商量 / 日日新, SenseTime):
+it brings the Token Plan models in over the OpenAI-compatible API, and reports the console's
+**credit quota** as native Magpie quota windows.
 
 ```
 $ magpie quota
 sensenova  通用积分池 · 5 小时窗口   0% used ↻ 2h  ·  Flash-Lite积分池 · 5 小时窗口  22.8% used ↻ 2h
 ```
 
+(The window labels are the platform's own pool names, passed through unchanged.)
+
 ---
 
-## ⚠️ 安全须知（请先读这一节）
+## ⚠️ Security notice — read this first
 
-**本插件是本机第三方客户端，与商汤无隶属关系。下面每一条都注明了依据来源，分三类：**
+**This plugin is a local third-party client. It is not affiliated with SenseTime.** Every point below
+says where its evidence comes from, in one of three kinds:
 
-- **实测** —— 对真实接口或本机的观察，附命令/现象；
-- **控制台代码** —— SenseNova 控制台前端代码里的原文；
-- **本插件代码** —— 本仓库源码的实际行为，附文件与函数。
+- **observed** — a measurement against the real API or this machine, with the command or symptom;
+- **console code** — a quotation from SenseNova's own console frontend;
+- **plugin code** — what this repository's source actually does, with file and function.
 
-前两类是关于外部世界的，可能随平台改版失效；第三类是关于这个包自身的，跟着版本走。**如果本插件代码那一类和你的观察不符，请以代码为准并提 issue。**
+The first two describe the outside world and can be invalidated by a platform change. The third
+describes this package and moves with its version. **If something labelled "plugin code" disagrees with
+what you observe, trust the code and open an issue.**
 
-### 1. 存了什么、存在哪
+### 1. What is stored, and where
 
-两套凭据，作用域完全不同：
+Two credential sets, with very different scopes:
 
-| 凭据 | 存到哪 | 字段 | 能做什么 |
+| Credential | Stored in | Fields | What it can do |
 | --- | --- | --- | --- |
-| API Key | `~/.config/magpie/plugin-auth.json` | `key`（`type: "api"`） | 只调 Token Plan 的模型 |
-| 账号 + 密码（填了才存） | 同一文件的 `metadata` | `metadata.username` / `metadata.password` | **整个账号** |
-| 控制台 OAuth 令牌 | 同一文件的 `metadata`，或 `~/.sensenova-quota.json` | `access` / `refresh` / `cookie` / `iamBase` | 读积分额度、续期令牌 |
-| 会话 cookie（用了才存） | 同上 | `metadata.cookie` | 免密码换控制台令牌 |
+| API key | `~/.config/magpie/plugin-auth.json` | `key` (`type: "api"`) | Call the Token Plan models |
+| Account + password (only if you supply them) | same file, under `metadata` | `metadata.username` / `metadata.password` | **The whole account** |
+| Console OAuth tokens | same file's `metadata`, or `~/.sensenova-quota.json` | `access` / `refresh` / `cookie` / `iamBase` | Read quota, renew tokens |
+| Session cookie (only if you supply it) | as above | `metadata.cookie` | Trade for console tokens without a password |
 
-**账号密码不只能读额度。** 用它可以登录 SenseNova 控制台、创建和删除 API Key、以及做这个账号下的一切操作。填进插件就等于把整个账号交给了 Magpie 的凭据文件——这是本插件要求的最重的一项授权。**不填也能正常用**（见第 5 条）。
+**The account password does more than read quota.** It can sign in to the SenseNova console, create and
+delete API keys, and do anything else that account can do. Handing it to the plugin means handing the
+whole account to Magpie's credential file — the heaviest permission this plugin asks for. **Leaving it
+blank works fine** (see 5).
 
-`metadata` 里的账号密码有两个来源，都经你同意：你在插件登录框里填的，或你之前用 `snquota login --save-password` 存进 `~/.sensenova-quota.json` 的（插件在那份文件存在时会读它）。**插件不会从浏览器、系统钥匙串或其它供应商的凭据里抓取**，也不会写入 SenseNova 服务端上的任何凭据设置。
+The account and password in `metadata` have two possible origins, both consented to: what you typed into
+the plugin's sign-in prompt, or what you previously saved to `~/.sensenova-quota.json` with
+`snquota login --save-password` (the plugin reads that file when it exists). **It does not scrape
+credentials from a browser, the system keychain, or another provider's sign-in**, and it does not write
+to any credential setting on SenseNova's servers.
 
-**一处会写入本地文件，需要说明：** 如果凭据是从 `~/.sensenova-quota.json` 读来的（也就是你没在插件里填账号，走的是第 5 条第二条路），插件刷新令牌后会**把新令牌写回那个文件**，免得 CLI 里的副本过期。回写条件在代码里是「登录框里既没给账号也没给 cookie」；**只要你在插件里填了账号密码或 cookie，就完全不回写**。（`credentialsFile` 选项只改变写入目标，不能关掉回写。）
+**One local file does get written, and it should be stated:** if the credentials came from
+`~/.sensenova-quota.json` — that is, you did not fill in the account fields and took the second route in
+5 — then after renewing a token the plugin **writes the new token back to that file**, so the CLI's copy
+does not go stale. In code the condition is "neither a username nor a cookie was supplied at sign-in";
+**supply either one and nothing is written back.** (The `credentialsFile` option only redirects the
+write; it does not turn it off.)
 
-### 2. 密码是明文存储的
+### 2. The password is stored in plaintext
 
-**内容没有加密**，是明文 JSON。这一点和平台无关。
+**The content is not encrypted.** It is plain JSON. That part is platform-independent.
 
-至于「谁能读到」，别指望文件权限兜底。Linux/macOS 上 Magpie 按 600 创建（只有你自己可读），但 Windows 上实际拿不到这个保护——实测这台机器上 `plugin-auth.json` 和 `~/.sensenova-quota.json` 的有效模式都是 `666`，`ls -l` 显示的 `-rw-r--r--` 是 Git Bash 合成出来的假象。真实 ACL 是这样的：
+As for who can read it, do not rely on file permissions to save you. On Linux and macOS Magpie creates
+it as 600 (readable only by you), but on Windows that protection does not actually land — measured on
+this machine, both `plugin-auth.json` and `~/.sensenova-quota.json` have an effective mode of `666`, and
+the `-rw-r--r--` that `ls -l` prints is a Git Bash fabrication. The real ACL looks like this:
 
 ```
-<你的账户>              FullControl
-<某个本地用户组>        Modify        ← 不止你一个人能读
+<your account>          FullControl
+<some local group>      Modify        ← more than just you can read it
 NT AUTHORITY\SYSTEM     FullControl
 BUILTIN\Administrators  FullControl
 ```
 
-也就是说，同一台机器上任何以你的身份、或属于那个用户组运行的进程，都能读到密码。**密码的安全边界等于「这台机器上所有本地进程」，不等于「只有你」。**
+In other words, any process running as you, or as a member of that group, can read the password.
+**The password's security boundary is "every local process on this machine", not "only you".**
 
-所以实际的建议是：别把这两个路径放进云同步目录、备份任务或 dotfiles 仓库。密码一旦跟着备份走了，它走的是明文的。
+The practical advice is therefore: keep these two paths out of cloud-sync folders, backup jobs, and
+dotfiles repositories. Once the password rides along in a backup, it travels in plaintext.
 
-### 3. 密码是明文传输的，和浏览器不一样
+### 3. The password travels in plaintext, unlike the browser's
 
-**控制台代码**是这样的（`U` 是加密函数，`h.bK` 是登录请求）：
+The **console code** looks like this (`U` encrypts, `h.bK` is the sign-in request):
 
 ```js
-// 能取到 JWKS 时，先用服务器公钥把密码加密再提交
+// When the JWKS is available, encrypt with the server's public key before submitting
 if (s) { let t = await U(s, e.password); t && (r = t, a = !0) }
 await h.bK({ username: e.username, password: r, challenge: t, is_encrypt: a })
 ```
 
-浏览器发的是 `is_encrypt: true` + RSA-OAEP（JWE，`alg: RSA-OAEP, enc: A256GCM`）密文；**本插件直接发明文（`is_encrypt: false`）**——这是**实测**：服务端接受明文，不强制加密。
+The browser sends `is_encrypt: true` with an RSA-OAEP (JWE, `alg: RSA-OAEP, enc: A256GCM`) ciphertext.
+**This plugin sends plaintext (`is_encrypt: false`)** — this part is **observed**: the server accepts it
+and does not require encryption.
 
-两者最终服务端都能拿到明文（它本来就要拿明文去校验），差别在**链路暴露面**：HTTPS 仍然保护传输，但任何能看到 TLS 明文的东西——企业代理、抓包工具、带请求体的日志——都能看到密码。如果你在这种环境里，别填密码。
+Both end up as plaintext on the server, which is what it needs in order to check the password. The
+difference is **how much of the path is exposed**: HTTPS still protects the transport, but anything that
+can see TLS plaintext — a corporate proxy, a packet capture, request-body logging — can see the
+password. If you are behind one of those, do not fill in the password.
 
-### 4. 密码基本不会被用到
+### 4. The password is almost never used
 
-续期顺序是 `refresh_token` → 会话 cookie → 账号密码，**任一步成功就不会往下走**。只要 refresh_token 还活着，密码一次都不会被发送。它只是 refresh_token 失效后的兜底。
+The renewal order is `refresh_token` → session cookie → account password, and **the first step that
+succeeds stops the chain**. As long as the refresh token is alive, the password is never sent at all. It
+is only a fallback for when the refresh token has died.
 
-### 5. 不想存密码就别填
+### 5. If you would rather not store a password, leave it blank
 
-登录时的账号和密码两栏都可以留空。三种做法的取舍：
+Both the account and password fields at sign-in can be left empty. Three ways to run this, and what each
+costs you:
 
-| 做法 | 凭据落在哪 | 适合谁 |
+| Approach | What lands where | For whom |
 | --- | --- | --- |
-| **只填 API Key** | 只有 `key` | 只要模型调用，不在意额度显示 |
-| **留空账号密码** | 插件去读 `~/.sensenova-quota.json`（`snquota` 命令行写的，通常含 refresh_token） | 想显示额度，但不愿把账号密码交给 Magpie |
-| **填账号密码** | 明文进 `plugin-auth.json` | 没有别的令牌来源，接受第 1、7 条的风险 |
+| **API key only** | Just `key` | You want model calls and do not care about the quota display |
+| **Leave account and password blank** | The plugin reads `~/.sensenova-quota.json`, written by the `snquota` CLI (usually holds a refresh token) | You want the quota shown but will not hand the account password to Magpie |
+| **Fill in the account** | Plaintext into `plugin-auth.json` | You have no other token source and accept the risks in 1 and 7 |
 
-留空时如果那份配置也不存在，额度会报错提示登录——**模型调用始终不受影响**。
+If you leave them blank and that config file does not exist either, the quota reports an error asking you
+to sign in — **model calls are unaffected either way.**
 
-### 6. 它和哪些域名通信，没有遥测
+### 6. Which hosts it talks to, and no telemetry
 
-默认（`platform.sensenova.cn`）部署下是三个：
+On the default deployment (`platform.sensenova.cn`) there are three:
 
-| 域名 | 用途 | 发送什么 |
+| Host | Purpose | What is sent |
 | --- | --- | --- |
-| `token.sensenova.cn` | 模型请求、拉模型清单 | API Key |
-| `platform.sensenova.cn` | 读积分额度；图标 URL 也在这个域 | 控制台令牌 |
-| `iam.sensecoreapi.cn` | 续期控制台令牌 | 账号密码（仅第 4 条说的兜底场景） |
+| `token.sensenova.cn` | Model requests, model listing | API key |
+| `platform.sensenova.cn` | Reading quota; the icon URL also lives here | Console token |
+| `iam.sensecoreapi.cn` | Renewing the console token | Account and password (only in the fallback case in 4) |
 
-代码里还有第四个：`iam.sensecoreapi.tech`。它是 `nova.sensecore.tech` 这个**另一个部署**的 IAM 基址，只在账号属于该部署时才会用到（`iam_base` 可覆盖）。如果你用的是 `platform.sensenova.cn`，它不会出现。
+There is a fourth in the source: `iam.sensecoreapi.tech`. It is the IAM base for a **separate
+deployment**, `nova.sensecore.tech`, and is only reached when the account belongs to that deployment
+(`iam_base` overrides it). If you are on `platform.sensenova.cn`, it never appears.
 
-除此之外不向任何地方发送数据——没有遥测、没有上报、没有第三方 SDK。**不读其它供应商的凭据**（插件技术上能读同一个 `plugin-auth.json`，见第 7 条；这是代码里没这么做，不是环境上做不到），不改 Magpie 之外的配置，也不创建或删除 API Key（虽然控制台令牌有这个权限，插件只调读取额度的那个接口）。
+Nothing else is sent anywhere — no telemetry, no reporting, no third-party SDK. It **does not read other
+providers' credentials** (it technically could read the same `plugin-auth.json`, see 7; the point is
+that the code does not, not that the environment prevents it), does not touch configuration outside
+Magpie, and does not create or delete API keys (the console token could, but the plugin only calls the
+one read-only endpoint).
 
-额度读取默认缓存 60 秒（`quotaTtlMs`），避免 `usage` 被轮询时把接口刷爆。
+Quota reads are cached for 60 seconds by default (`quotaTtlMs`), so a polled `usage` hook does not hammer
+the endpoint.
 
-### 7. Magpie（以及其它插件）能看到什么
+### 7. What Magpie — and other plugins — can see
 
-Magpie 官方文档的 FAQ 里有一条原文：
+Magpie's own documentation has this in its FAQ:
 
-> **插件能看到用户的哪些内容？** 它发出的请求里的一切：对话、工具及其结果。只把它发到用户要求的地方，也不要记进日志。
+> **What can a plugin see about the user?** Everything in the requests it makes: the conversation, the
+> tools and their results. Send it only where the user asked, and do not put it in a log.
 
-这一条对本插件同样成立，必须讲清楚：**本插件是供应商插件，处在请求路径上**。它注册 provider，并包装 `fetch` 在发出去之前把 `authorization` 头换成当前 API Key：
+That applies to this plugin too, and it has to be spelled out: **this is a provider plugin, so it sits in
+the request path.** It registers a provider and wraps `fetch`, swapping the `authorization` header for
+the current API key before the request leaves:
 
 ```js
 async fetch(input, init) {
-  const headers = new Headers(init?.headers ?? request?.headers);
+  const headers = new Headers(init?.headers ?? source?.headers);
   headers.set("authorization", `Bearer ${current}`);
-  return fetch(request?.url ?? input, { ...init, headers });   // body 原样透传
+  return fetch(new Request(source, { ...init, headers }));   // body passes through
 }
 ```
 
-所以从能力上讲，它**处在能看到你整个对话、工具调用和工具返回结果的位置上**。
+So by capability it **is positioned to see your entire conversation, your tool calls, and their
+results.**
 
-本插件的实际行为是：**只读请求头、只改 `authorization` 这一个字段**，不读请求体（`body` 由 `{...init}` 原样透传），不把内容写到任何地方，不缓存提示词或响应，也不向第 6 条列出的域名之外发送任何数据。**但这是代码的自我约束，不是平台给的隔离**——你只能靠读代码来确认，不能靠 Magpie 来保证。
+What the code actually does: **it reads headers and rewrites the single `authorization` field**, does not
+read the request body (the `body` is carried through by `{...init}`), does not write the content
+anywhere, does not cache prompts or responses, and does not send anything to a host outside the list in
+6. **But that is the code restraining itself, not isolation granted by the platform** — you can only
+confirm it by reading the code, and Magpie cannot guarantee it for you.
 
-具体到 Magpie 的插件机制，有三个事实决定了这条约束有多可靠：
+Three facts about Magpie's plugin mechanism decide how much that restraint is worth:
 
-- **插件没有沙箱。** 插件是跑在 Magpie 进程里的普通代码，能用 `fs` 读文件。Magpie 文档建议「在沙箱里运行 magpie」给单独的 HOME，正是因为这个。
-- **插件没有经过审核。** 从 GitHub topic 装进来的插件，Magpie 会明确标注「没有人审阅过」。本插件也一样属于未审核的第三方代码。
-- **所有插件的凭据在同一个文件里。** `plugin-auth.json` 是一个文件，装着所有供应商、所有插件的登录信息，而不是每插件一份。既然插件没有沙箱又有 `fs`，那么**你装的任何其它插件都能读到本插件存在里面的账号密码**。这是选择是否填密码时最该考虑的一点——如果机器上还跑着来路不明的插件，就别填密码（见第 5 条）。
+- **Plugins are not sandboxed.** A plugin is ordinary code running inside Magpie's process, and it can
+  read files with `fs`. Magpie's documentation recommends "running magpie in a sandbox" with a separate
+  HOME for exactly this reason.
+- **Plugins are not reviewed.** For plugins installed from the GitHub topic, Magpie explicitly labels
+  them as reviewed by nobody. This plugin is unvetted third-party code in the same way.
+- **Every plugin's credentials live in one file.** `plugin-auth.json` is a single file holding the
+  sign-in for every provider and every plugin, not one file per plugin. Since plugins are unsandboxed and
+  have `fs`, **any other plugin you install can read the account password this one stored there.** This
+  is the single most important consideration when deciding whether to fill in a password — if there are
+  plugins of unknown provenance on the machine, leave it blank (see 5).
 
-Magpie 自己会读 `plugin-auth.json`（管理登录）、`plugins.json`（插件与选项）、`plugin-providers.json`（上次列出的供应商/模型），并且**插件详情页显示的是 npm 上的 README**——所以这份 README 就是本插件唯一的披露面，下面每一条都是为了让它如实。
+Magpie itself reads `plugin-auth.json` (to manage sign-ins), `plugins.json` (plugins and their options),
+and `plugin-providers.json` (the last listed providers and models). And **the plugin detail page shows
+the README from npm** — so this README is this plugin's only disclosure surface, which is why every point
+here is written to be checkable.
 
-### 8. 风险声明：额度接口是控制台内部接口，不是公开 API
+### 8. Risk statement: the quota endpoint is a console-internal API, not a public one
 
-`platform.sensenova.cn/lite/console/v1/tokenplan/pool-usage` 是**控制台自己的前端**用来画「积分额度」面板的接口（代码原文：`window.location.origin + "/lite"` 拼出来的路径）。它未公开、可能随时变更或消失。
+The quota figure is served by an endpoint on the console host that **the console's own frontend** uses to
+draw its credit panel. It is undocumented, and it can change or disappear at any time. The exact path is
+deliberately not written down here; it is in `quota.mjs` if you need to see it.
 
-之所以走这条路，是因为平台**没有提供任何 API Key 可访问的额度接口**——实测 `/v1/llm/usage`、`/v1/llm/quota`、`/v1/llm/balance`、`/v1/dashboard/billing/subscription` 等十几个候选路径全部返回 404。
+That route exists because the platform **offers no API-key-accessible quota endpoint at all** —
+**observed**: a dozen candidate paths on the public LLM host (`/v1/llm/usage`, `/v1/llm/quota`,
+`/v1/llm/balance`, `/v1/dashboard/billing/subscription`, and others) all return 404.
 
-**风险不止「可能失效」这一条。** 如实列出：
+**The risk is not limited to "it might break".** Stated plainly:
 
-| 风险 | 说明 |
+| Risk | What it means |
 | --- | --- |
-| **可能违反服务条款** | 该接口是控制台前端自用的，不是对外承诺的 API。用脚本代访问是否被允许，由平台解释，**请自行确认**。本插件不改变也不规避任何条款。 |
-| **可能随时失效** | 未公开接口没有兼容性承诺。改版、加签名、加风控都可能让它直接 404 或 403，届时额度显示会报错（模型调用不受影响）。 |
-| **可能触发风控** | 自动登录 + 定时读额度，从服务端看是非典型客户端行为。本插件已经把额度读取缓存 60 秒、把密码降为最后手段来压低痕迹，但**不能保证不被判定为异常**。 |
-| **凭据暴露面扩大** | 为了调这个接口，插件必须持有控制台令牌（以及可选地持有账号密码）。这部分风险见第 1~7 条。 |
+| **It may breach the terms of service** | The endpoint is the console frontend's own, not a promised API. Whether scripted access is permitted is the platform's call, and **you should confirm it yourself**. This plugin neither changes nor circumvents any term. |
+| **It may stop working** | An undocumented endpoint makes no compatibility promise. A redesign, a signature requirement, or rate limiting could turn it into a 404 or 403, at which point the quota display reports an error (model calls are unaffected). |
+| **It may trip abuse controls** | Automatic sign-in plus periodic quota reads look like a non-standard client from the server's side. This plugin already caches quota reads for 60 seconds and demotes the password to a last resort in order to keep the footprint small, but **it cannot promise you will not be flagged.** |
+| **It widens credential exposure** | Reaching this endpoint requires holding a console token (and optionally an account password). That part of the risk is covered by 1 through 7. |
 
-这四条里，第一条是唯一需要你自己判断的——技术问题插件都能处理，合规问题不能。**如果你在意，就不要用额度功能**：只填 API Key 的话，插件退化成纯模型供应商，不碰控制台接口，第 2~4 条风险也随之消失。
+Of these four, the first is the only one that needs your judgement — the plugin can handle the technical
+ones, not the compliance one. **If that bothers you, do not use the quota feature**: with only an API key
+filled in, the plugin degrades to a plain model provider and never touches the console API, and risks 2
+through 4 go away with it.
 
-### 9. 它不做的事
+### 9. What it does not do
 
-- 不申请、不轮换、不撤销你的 API Key。
-- 不改你的 SenseNova 账号设置。
-- 不读、不记录、不转发你的模型请求内容——只改写请求头里的 `authorization` 一个字段，请求体原样透传给 `token.sensenova.cn`（见第 7 条的代码）。
-- 不缓存任何提示词或响应。
-- 不写入 SenseNova 服务端的任何凭据设置。
-- 不写回 `~/.sensenova-quota.json`，**除非**凭据本来就是从那里读的、且刷新了令牌（见第 1 条末段）。
+- It does not request, rotate, or revoke your API keys.
+- It does not change your SenseNova account settings.
+- It does not read, log, or forward your model request content — it rewrites the single `authorization`
+  header and passes the body through to `token.sensenova.cn` (see the code in 7).
+- It does not cache prompts or responses.
+- It does not write to any credential setting on SenseNova's servers.
+- It does not write back to `~/.sensenova-quota.json`, **except** when the credentials came from that
+  file and a token was renewed (see the end of 1).
 
 ---
 
-## 两件事，一个包
+## Two things, one package
 
-平台把这两样东西放在了完全不同的地方，所以插件同时做两件事：
+The platform puts these two in completely different places, so the plugin does two things at once:
 
-| | 地址 | 鉴权 |
+| | Where | Auth |
 | --- | --- | --- |
-| **模型调用** | `https://token.sensenova.cn/v1`（OpenAI 兼容） | API Key |
-| **积分额度** | `https://platform.sensenova.cn/lite/console/v1/tokenplan/pool-usage` | 控制台 OAuth 令牌 |
+| **Model calls** | `https://token.sensenova.cn/v1` (OpenAI-compatible) | API key |
+| **Credit quota** | An internal API on the console host | Console OAuth token |
 
-**没有任何 API Key 可访问的额度接口。** 我逐个探过 `/v1/llm/usage`、`/v1/llm/quota`、`/v1/llm/balance`、`/v1/dashboard/billing/subscription` 等十来个候选路径，全部返回 404；额度只存在于控制台自己的接口里，而那需要 Ory 的 Bearer 令牌。所以这两个凭据是**真的彼此独立**，插件在登录时一起收集。
+**There is no API-key-accessible quota endpoint.** A dozen candidate paths were probed one by one and all
+returned 404; the quota exists only behind the console's own endpoint, which needs an Ory bearer token.
+So the two credentials are **genuinely independent**, and the plugin collects both at sign-in.
 
 ---
 
-## 额度上报到哪
+## Where the quota is reported
 
-Magpie 的插件系统**不允许插件添加面板或页面**，也没有任何东西能往「用量-概览」这个分析页里塞内容——那是 Magpie 自己的请求计量驱动的。
+Magpie's plugin system **does not let a plugin add panels or pages**, and nothing can feed content into
+the usage-overview analytics page — that is driven by Magpie's own request metering.
 
-插件能用的唯一额度通道是 `auth.usage`。它返回的内容会出现在三个地方：
+The only quota channel a plugin has is `auth.usage`. What it returns shows up in three places:
 
-- 供应商里的**账号行**上
+- the provider's **account row**
 - `magpie quota`
-- 网关的 `GET /v1/magpie/quotas`
+- the gateway's `GET /v1/magpie/quotas`
 
-好消息是 Magpie 的额度模型和 SenseNova 的数据几乎一一对应，所以信息不会丢：
+The good news is that Magpie's quota model maps almost one-to-one onto SenseNova's data, so nothing is
+lost:
 
 | SenseNova | Magpie |
 | --- | --- |
-| 通用积分池 5 小时窗口（`window_5h`） | `windows[]` 一项，`span: 18000` |
-| 通用积分池本周（`window_7d`） | `windows[]` 一项，`span: 604800` |
-| 池覆盖哪些模型（`model_ids`） | `models[]`（语义是「恰好这些 id」） |
-| 套餐名（`plan.name`，实际是 `Free Plan`） | `plan` |
-| 活动固定积分总量余额（`grant_balance`） | `balance` |
-| 窗口重置时间（`reset_at`） | `resetsAt`（秒级时间戳） |
+| General pool, 5-hour window (`window_5h`) | one `windows[]` entry, `span: 18000` |
+| General pool, this week (`window_7d`) | one `windows[]` entry, `span: 604800` |
+| Which models a pool covers (`model_ids`) | `models[]` (meaning "exactly these ids") |
+| Plan name (`plan.name`, in practice `Free Plan`) | `plan` |
+| Granted credit balance (`grant_balance`) | `balance` |
+| Window reset time (`reset_at`) | `resetsAt` (a Unix timestamp in seconds) |
 
-模型归属直接用服务器给的 `model_ids`，不按名字猜——专属池的 `model_ids` 就是 `["sensenova-6.7-flash-lite","sensenova-6.8-flash-lite"]`，比任何关键词匹配都准（只有拿不到 `model_ids` 时才退回按 `flash-lite` 匹配）。套餐名同理，用接口返回的 `plan.name`。
+Model scoping uses the server's own `model_ids` rather than guessing from names — the dedicated pool's
+`model_ids` is `["sensenova-6.7-flash-lite","sensenova-6.8-flash-lite"]`, which beats any keyword
+matching (the plugin only falls back to matching `flash-lite` when `model_ids` is absent). The plan name
+works the same way, taken from the endpoint's `plan.name`.
 
-### ⚠️ `amount` 是必须的，文档里没写
+### ⚠️ `amount` is required, and the docs do not say so
 
-每个窗口除了 `used`（已用百分比）和 `limit`（配额），还必须给 **`amount`（已用数量）**。
+Besides `used` (percent used) and `limit` (the allowance), every window must carry **`amount` (the used
+quantity)**.
 
-这是踩过的坑：只给 `used` 和 `limit` 的话，百分比是对的，但界面上的数量会显示成 `0 / 600000` —— 看起来和真实余额完全对不上。原因是 Magpie 的界面按「已用 / 配额」渲染，并且有「已用 | 剩余」的切换，两边都从 `amount` 算；缺了它就只能按 0 处理。
+This was learned the hard way: with only `used` and `limit`, the percentage is right but the number in
+the UI reads `0 / 600000` — which looks nothing like the real balance. Magpie renders the card as
+"used / limit" and offers a "used | remaining" toggle, and both are computed from `amount`; without it,
+the count is simply treated as 0.
 
-这个字段**没有出现在插件文档的窗口字段列表里**（文档只列了 `name`/`used`/`resetsAt`/`resetSecs`/`span`/`display`/`model`/`models`/`notModels`/`aside`）。我是从两个社区插件的实现里对出来的——`@magpie-community/opencode-workbuddy-auth` 和 `opencode-zcode-auth` 都设了它，后者的注释也写明了用途：
+The field **is not in the plugin documentation's list of window fields** (the docs list only
+`name`/`used`/`resetsAt`/`resetSecs`/`span`/`display`/`model`/`models`/`notModels`/`aside`). It was
+recovered by reading two community plugins — `@magpie-community/opencode-workbuddy-auth` and
+`opencode-zcode-auth` both set it, and the latter's comment states its purpose:
 
 > the count is told carries it as **amount of limit**, so magpie's card says …
 
-所以本插件给的每个窗口是：`used`（百分比）、`amount`（已用数量）、`limit`、`unit`、`display`、`span`、`resetsAt`，专属池再加 `models`。`display` 按 Magpie 自己的紧凑写法（`compact()`，整数给整数、否则两位小数）生成，和 `amount`/`limit` 并排渲染时格式一致。
+So every window this plugin emits carries `used` (percent), `amount` (used quantity), `limit`, `unit`,
+`display`, `span`, `resetsAt`, plus `models` on the dedicated pool. `display` is generated with Magpie's
+own compact formatting (`compact()`: integers as integers, otherwise two decimals) so it lines up with
+`amount`/`limit` when rendered side by side.
 
-对账方式很简单：`limit - amount` 必须等于控制台显示的「本周余额」。实测四个窗口全部精确相等。
+Reconciling is easy: `limit - amount` must equal the console's displayed weekly remaining balance.
+**Observed**: all four windows match exactly.
 
 ---
 
-## 安装
+## Install
 
 ```bash
-magpie plugin add <本仓库路径>
+magpie plugin add <path to this repository>
 magpie plugin login sensenova
 ```
 
-登录时会问三件事：
+Sign-in asks three things:
 
-1. **SenseNova API Key**（必填）——控制台 → API-Key 管理。没有它这个供应商发不出任何请求。
-2. **账号**（选填）——用来读控制台积分额度。
-3. **密码**（选填）——同上。
+1. **SenseNova API key** (required) — console → API-Key management. Without it the provider cannot make
+   any request.
+2. **Account** (optional) — used to read the console's credit quota.
+3. **Password** (optional) — same.
 
-后两项留空也没关系：插件会退回去读 `snquota` 命令行工具写在本机的 `~/.sensenova-quota.json`。
+Leaving the last two blank is fine: the plugin falls back to `~/.sensenova-quota.json`, written on this
+machine by the `snquota` CLI.
 
-### 关于那两项控制台凭据
+### About those two console credentials
 
-额度接口要的是控制台令牌，而令牌约 2.4 小时过期。插件内部实现了三条续期路径，按可靠性排序：
+The quota endpoint wants a console token, and that token expires in about 2.4 hours. The plugin
+implements three renewal paths, in order of reliability:
 
-1. `refresh_token`（标准续期）
-2. 浏览器会话 cookie（重放授权码 + PKCE 流程）
-3. 账号密码（完整自动登录，含 `login_challenge` → 校验 → 提交 → 跟随跳转 → 换令牌）
+1. `refresh_token` (the standard renewal)
+2. Browser session cookie (replaying the authorization-code + PKCE flow)
+3. Account and password (a full automated sign-in: `login_challenge` → challenge check → submit →
+   follow the redirect chain → exchange for a token)
 
-如果你已经在用 [snquota](https://github.com/) 命令行，直接让插件读那份配置最省事，两条命令都能用同一份凭据：
+If you already use the `snquota` CLI, the simplest arrangement is to let the plugin read that config, so
+both share one set of credentials:
 
 ```bash
-snquota login --username 你的账号 --password 你的密码 --save-password
+snquota login --username <your account> --password <your password> --save-password
 ```
 
-**密码是明文存在 `plugin-auth.json` 里的**（存储和权限的细节见上面第 2 条）。不接受的话就别填密码，改用 cookie 或让插件读 snquota 的配置。
+**The password is stored in plaintext in `plugin-auth.json`** (storage and permission details are in 2
+above). If that is not acceptable, do not fill in a password — use a cookie, or let the plugin read the
+`snquota` config.
 
 ---
 
-## 配置
+## Configuration
 
-`plugins.json` 里这一项的 `options`：
+The `options` for this entry in `plugins.json`:
 
 ```json
 {
@@ -257,94 +348,119 @@ snquota login --username 你的账号 --password 你的密码 --save-password
 }
 ```
 
-| 选项 | 默认 | 说明 |
+| Option | Default | Meaning |
 | --- | --- | --- |
-| `baseURL` | `https://token.sensenova.cn/v1` | Token Plan 地址 |
-| `quotaTtlMs` | `60000` | 额度缓存多久。`usage` 会被轮询，缓存是为了别把额度接口刷爆 |
-| `scopeModel` | `flash-lite` | 专属积分池用哪个关键词限定模型 |
-| `credentialsFile` | `~/.sensenova-quota.json` | 控制台凭据的位置 |
+| `baseURL` | `https://token.sensenova.cn/v1` | Token Plan address |
+| `quotaTtlMs` | `60000` | How long a quota read is cached. `usage` gets polled; the cache keeps the endpoint from being hammered |
+| `scopeModel` | `flash-lite` | Which keyword scopes the dedicated pool's models |
+| `credentialsFile` | `~/.sensenova-quota.json` | Where the console credentials live |
 
 ---
 
-## 额度和 Key 的关系：额度是账户级的
+## Quota and API keys: the quota is account-level
 
-**积分额度不按 API Key 分开，同账户所有 Key 共享同一个池。**
+**The credit quota is not split per API key. Every key on the same account shares one pool.**
 
-三条证据：
+Three pieces of evidence:
 
-1. 控制台自己的横幅就写着「**同账户所有 Key 共享**」。
-2. `pool-usage` 的响应里**完全没有 Key 维度**——顶层只有 `{plan, pools}`，每个池的字段是 `id`/`name`/`model_ids`/`window_5h`/`window_7d`/`grant_balance`/`pool_type`，没有任何 key 标识。插件拿到的就是账户级的数字。
-3. 按 Key 的拆分存在于另一个地方：**使用明细**。`/console/v1/metered/usage-records` 支持按 `apiKey` 筛选（页面代码里有 `apiKeyValuesById` 和 `t.apiKey === a.apiKey`），每条调用记录带 Key，还能导出 CSV / Excel。
+1. The console's own banner says 「**同账户所有 Key 共享**」 ("shared by all keys on the account").
+2. The quota endpoint's response has **no key dimension at all** — the top level is only `{plan, pools}`,
+   and each pool carries `id`/`name`/`model_ids`/`window_5h`/`window_7d`/`grant_balance`/`pool_type`
+   with no key identifier anywhere. What the plugin receives is an account-level number.
+3. Per-key breakdown lives somewhere else: the console's **usage records** page. That endpoint supports
+   filtering by `apiKey`, and each call record carries its key and can be exported as CSV or Excel.
 
-所以是两层不同的东西：
+So these are two different layers:
 
-| | 维度 | 说明 |
+| | Dimension | What it is |
 | --- | --- | --- |
-| **积分池（本插件显示的）** | 账户级 | 同账户所有 Key 共享；Key 只是入口，不各自记账 |
-| **使用明细** | 逐条记录 | 每条带 Key，可按 Key 拆分和导出 |
+| **Credit pool (what this plugin shows)** | Account-level | Shared by every key on the account; a key is an entry point, not a separate ledger |
+| **Usage records** | Per call | Each record carries its key, filterable and exportable by key |
 
-### 对 Magpie 的实际影响
+### What this means for Magpie in practice
 
-供应商卡片标题写的是「API key …HohJ」，但它显示的额度是**账户级**的。所以：
+The provider card is titled "API key …HohJ", but the quota it shows is **account-level**. So:
 
-- 把**同一个 SenseNova 账户的两个 Key** 都加进 Magpie，两行会显示**完全相同的数字**。
-- Magpie 那句「前一个额度用完自动换下一个」在这种情况下会失效——它会以为每个 Key 各有独立的 600,000 额度，实际它们共用一个池。**加 Key 不会多出额度。**
-- 想要更多额度只能是**不同的 SenseNova 账户**。
-
----
-
-## 图标
-
-用的是平台自己的图标：`assets/sensenova.png` 就是 `https://platform.sensenova.cn/favicon.ico` 的原始字节。那个地址虽然叫 `.ico`、响应头也写着 `image/x-icon`，但内容其实是一张 65×65 的 PNG，所以 data URI 按真实字节声明成 `image/png`。
-
-图标**内置而不是引用 URL**：这样离线也能认出来，也不依赖平台继续提供这个文件。`package.json` 里的 `magpie.icon` 仍然指向那个地址，供将来发到 npm 后的「发现」卡片使用。
+- Add **two keys from the same SenseNova account** and both rows show **exactly the same numbers**.
+- Magpie's "when one runs out, switch to the next" behaviour fails in this case — it assumes each key has
+  its own 600,000 allowance, when they actually share one pool. **Adding keys does not add quota.**
+- More quota means **a different SenseNova account**.
 
 ---
 
-## 模型
+## Icon
 
-内置快照里的 4 个 id 不是我编的，是平台自己的用量报表真正吐出来的（`credit-usage-trend` 的 `series[].model_id`）：
+It uses the platform's own icon: `assets/sensenova.png` is the raw bytes of
+`https://platform.sensenova.cn/favicon.ico`. That address is named `.ico` and served with an
+`image/x-icon` header, but the payload is actually a 65×65 PNG, so the data URI declares `image/png` to
+match the bytes rather than the header.
 
-- `sensenova-6.8-flash-lite`（多模态）
+The icon is **vendored rather than referenced by URL** so the provider stays identifiable offline and
+does not depend on the platform continuing to serve the file. The `magpie.icon` field in `package.json`
+still points at that address, for the discovery card once this is published to npm.
+
+---
+
+## Models
+
+The four ids in the built-in snapshot are not invented — they are what the platform's own usage report
+emits (`credit-usage-trend`'s `series[].model_id`):
+
+- `sensenova-6.8-flash-lite` (multimodal)
 - `deepseek-flash`
 - `glm-5.2`
 - `kimi-k3`
 
-登录后 `provider.models` 会用 API Key 去 `GET /v1/models` 拉实时清单（这个端点是存在的，无 key 返回 401 而不是 404），拉到就用实时的，拉不到就回落并打上 Magpie 的回落标记。Magpie 还会把它自己 models.dev 里的 `sensenova` 条目合并进来，实测多出 `deepseek-v4-pro`、`deepseek-v4-flash` 两个 1M 上下文的模型。
+After sign-in, `provider.models` uses the API key to fetch the live list from `GET /v1/models` (that
+endpoint exists — it answers 401 without a key rather than 404). A live list is used when available;
+otherwise the plugin falls back and marks the list with Magpie's fallback flag. Magpie also merges its
+own models.dev entry for `sensenova`, which in practice adds `deepseek-v4-pro` and `deepseek-v4-flash`,
+two 1M-context models.
 
-上下文长度和输出上限在平台公开文档里查不到，内置快照里用的是保守占位值；实时清单若带元数据会覆盖它们。
-
----
-
-## 已知边界
-
-- **额度只在账号行 / `magpie quota` / `/v1/magpie/quotas` 三处出现**，塞不进「用量-概览」。这是 Magpie 的设计，不是本插件没做到。
-- 控制台令牌过期后如果三条续期路径都失效（refresh_token 被撤销、cookie 过期、密码错），账号行会显示一条 `error`，提示重新登录。
-- 额度接口是控制台内部接口，不是公开 API，改版可能失效。
-- 模型能力字段（上下文长度等）在没有实时清单时是占位值。
+Context length and output ceiling are not published anywhere in the platform's public documentation, so
+the built-in snapshot uses conservative placeholders; a live list that carries metadata overrides them.
 
 ---
 
-## 作为插件分发（提交到 GitHub 之后）
+## Known limits
 
-仓库推到 GitHub 还不会自动出现在 Magpie 里。按官方文档，插件通过三条路被发现，可以只走一条：
+- **The quota appears in exactly three places** — the account row, `magpie quota`, and
+  `/v1/magpie/quotas` — and cannot be put into the usage overview. That is Magpie's design, not something this
+  plugin failed to do.
+- If the console token expires and all three renewal paths fail (refresh token revoked, cookie expired,
+  wrong password), the account row shows an `error` asking you to sign in again.
+- The quota endpoint is a console-internal API rather than a public one, so a redesign may break it.
+- Model capability fields (context length and so on) are placeholders when there is no live list.
 
-**1. GitHub topic（最省事）**
+---
 
-给仓库打上 `magpie-plugin` 这个 topic，就会出现在 Magpie 的 Plugins → Discover → **unofficial plugins** 里，按 star 排序，并标注为「未审核」。要求：
+## Distributing this as a plugin
 
-- `package.json` 必须在**仓库根目录**（本仓库满足）。
-- 如果同时发布到了 npm 且 `repository` 指向该仓库，安装走 npm；否则直接装仓库当前代码，所以**加载的文件必须已提交**（本仓库是纯源码，没有构建产物，满足）。
-- fork、归档仓库、`magpie-community` 自己的仓库会被排除。
-- GitHub 最多每 10 分钟轮询一次，打完 topic 几分钟内可见。
+Pushing the repository to GitHub does not by itself make it show up in Magpie. Per the official docs,
+plugins are discovered through three routes, and one is enough:
+
+**1. GitHub topic (least work)**
+
+Tag the repository `magpie-plugin` and it appears under Plugins → Discover → **unofficial plugins**,
+sorted by stars and labelled as reviewed by nobody. Requirements:
+
+- `package.json` must be at the **repository root** (satisfied here).
+- If the package is also on npm and its `repository` points at this repo, installs come from npm;
+  otherwise they install the repository's current code, so **the loaded files must be committed** (this
+  repo is pure source with no build output, so this is satisfied).
+- Forks, archived repositories, and `magpie-community`'s own repositories are excluded.
+- GitHub is polled at most every ten minutes, so a fresh topic shows up within minutes.
 
 **2. npm**
 
-插件浏览器会拿关键词 `<关键词> opencode` 去搜 npm，命中条件是包名或 keywords 里**同时**含有 `opencode` 和 auth / plugin / provider 之一。本仓库的 keywords 已经带上了 `opencode`、`opencode-plugin`、`opencode-auth`，满足条件。普通插件**不要求任何 scope**，`@magpie-community/` 只用于收进官方社区仓库的包。
+The plugin browser searches npm for `<keyword> opencode`, matching packages whose name or keywords
+contain **both** `opencode` and one of auth / plugin / provider. This repository's keywords already
+include `opencode`, `opencode-plugin`, and `opencode-auth`, so it qualifies. Ordinary plugins **require
+no scope**; `@magpie-community/` is only for packages contributed into the official community repo.
 
-**3. 进推荐列表（`registry.json`）**
+**3. The recommended list (`registry.json`)**
 
-向社区仓库提 PR，在 `registry.json` 里加一条：
+Open a PR against the community repository adding an entry:
 
 ```json
 {
@@ -352,22 +468,34 @@ snquota login --username 你的账号 --password 你的密码 --save-password
   "name": "SenseNova",
   "icon": "https://platform.sensenova.cn/favicon.ico",
   "providers": ["sensenova"],
-  "summary": "商量/日日新 Token Plan 模型，并把控制台积分额度上报成原生额度窗口"
+  "summary": "商量/日日新 Token Plan models, with the console's credit quota reported as native quota windows"
 }
 ```
 
-这个列表最多每 6 小时拉一次，Magpie 内置了一份快照作为兜底。也可以用 `MAGPIE_PLUGIN_MARKET=<url>` 换成自己的列表（`off` 表示用内置的）。
+That list is fetched at most every six hours, and Magpie ships a built-in copy as a fallback.
+`MAGPIE_PLUGIN_MARKET=<url>` swaps in another list (`off` means use only the built-in copy).
 
-> 想让插件自动跟随更新（推新版本就自动发到所有 Magpie），得走社区包路线：在 `magpie-community/plugins` 的 `packages/<name>` 下贡献，供应商包命名为 `@magpie-community/opencode-sensenova-auth`，并且尽量避免运行时依赖。本仓库目前**零依赖**，迁过去不需要改代码。
+> To have the plugin update itself — pushing a version publishes it to every Magpie — take the community
+> package route: contribute under `packages/<name>` in `magpie-community/plugins`, naming a provider
+> package `@magpie-community/opencode-sensenova-auth`, and avoid runtime dependencies where possible.
+> This repository currently has **zero dependencies**, so moving it there needs no code changes.
 
-**当前状态**：本地仓库已提交，尚未推送到 GitHub、未发布到 npm、未打 topic。`repository` / `homepage` / `bugs` 三个字段都已按 `aqiu817/magpie-sensenova` 填好，推送后即可直接使用。
+**Current status**: committed locally, not yet pushed to GitHub, not published to npm, no topic set. The
+`repository` / `homepage` / `bugs` fields are already filled in as `aqiu817/magpie-sensenova`, so they
+work as soon as it is pushed.
 
 ---
 
-## 开发
+## Development
 
 ```bash
 node --test test/*.test.mjs
 ```
 
-20 个单测覆盖：额度池到窗口的映射（含 `used` 百分比、`amount` 已用数量、`limit`、`span`、`resetsAt`、专属池的模型限定、固定积分余额）、`limit - amount` 能还原控制台余额、字段缺失时的降级、JWT 过期判断、refresh_token 续期、无凭据时的报错，以及模型规范化的两种信封。
+26 tests cover: mapping pools to windows (including the `used` percentage, `amount`, `limit`, `span`,
+`resetsAt`, the dedicated pool's model scoping, and the granted balance); that `limit - amount`
+reproduces the console balance; that a window with an unknown usage is skipped rather than reported as
+zero; degradation when fields are missing; JWT expiry; refresh-token renewal; the error raised when
+there are no credentials; the `fetch` hook preserving the body and headers for both `(url, init)` and
+`Request` inputs; that internal `__`-prefixed keys never reach the credentials file; and both envelopes
+for model normalization.

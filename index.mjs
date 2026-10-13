@@ -195,15 +195,14 @@ export async function SenseNovaPlugin({ client } = {}, options = {}) {
             // Re-read per request so a sign-in that changes mid-session is
             // picked up without waiting for the loader to re-run.
             const current = apiKeyOf(await readAuth(getAuth));
-            const request = input instanceof Request ? input : null;
-            const headers = new Headers(init?.headers ?? request?.headers);
+            const source = input instanceof Request ? input : null;
+            const headers = new Headers(init?.headers ?? source?.headers);
             if (current === undefined) headers.delete("authorization");
             else headers.set("authorization", `Bearer ${current}`);
-            return fetch(request !== null ? request.url : input, {
-              ...init,
-              headers,
-              method: init?.method ?? request?.method,
-            });
+            // A Request carries its own body, and re-issuing one by URL alone
+            // silently drops it — so clone it instead of rebuilding the call.
+            if (source) return fetch(new Request(source, { ...init, headers }));
+            return fetch(input, { ...init, headers });
           },
         };
       },
