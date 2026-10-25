@@ -30,13 +30,18 @@ magpie plugin login sensenova
 
 也可以把仓库路径直接交给 `magpie plugin add <path to this repository>`。
 
-登录会问三件事，前两件都可以不填：
+登录会先让你选一种方式把控制台账号交出来（读额度用），两种都通向同一件事：
 
-1. **账号**（可选）——用于读控制台的积分额度；填了它，账号行就显示这个名字。
-2. **密码**（可选，输入时不回显）——同上。
-3. **API Key**（必填）——在控制台 → API-Key 管理里创建，输入时不回显。没有它，provider 发不出任何请求。
+1. **填账号密码**——账号填了会显示在账号行上；密码输入时不回显，且明文存在本机凭据文件里（见「隐私与安全须知」）。两项都可以留空。
+2. **浏览器登录**——密码不用交给插件：网页版会直接替你把控制台的授权页打开，登录完浏览器会落到一条 `https://platform.sensenova.cn/?code=…` 打不开的地址，把整条地址粘回提示框即可。命令行下没有浏览器可开，插件会打印这条地址让你自己打开，然后等一个 `Code:`。
 
-前两件留空没问题：插件会改读 `~/.sensenova-quota.json`，那是本机 `snquota` CLI 写的配置。
+两种方式都要 **API Key**（必填，输入时不回显）——在控制台 → API-Key 管理里创建。没有它，provider 发不出任何请求；第 2 种方式先问 API Key，再开浏览器。
+
+第 1 种方式两项留空没问题：插件会改读 `~/.sensenova-quota.json`，那是本机 `snquota` CLI 写的配置。第 2 种方式换到的控制台 token 也写进同一个文件，下次读额度直接用。
+
+浏览器登录成功后会更新这个控制台账号原来那一行：写入你填的 API Key 与控制台 token，账号行按控制台账号名显示。这一行之前用第 1 种方式存下的密码不会保留——还要它做续期兜底的话，回头再跑一次第 1 种方式即可。
+
+浏览器登录为什么要把地址粘回来：控制台的登录客户端只登记了 `https://platform.sensenova.cn` 这一个回调地址，`http://127.0.0.1:<端口>` 会被直接拒（实测），插件没法自己把浏览器跳转接回来。
 
 ### Windows 下登录提示失败
 
@@ -48,11 +53,13 @@ magpie: read /dev/stdin: The handle is invalid.
 
 这是 Magpie 宿主自己在读标准输入，不是本插件的问题，任何用文本提示的插件都一样。两种绕法：
 
-**改在命令行里答。** 管道输入可用，答案按提示顺序读取——账号、密码、API Key。末尾那行 `.` 很关键：只有三行时，读取器在最后一个提示前就用完并报 EOF。
+**改在命令行里答。** 管道输入可用，答案按提示顺序读取——先一个方式序号（`1` 账号密码 / `2` 浏览器登录），再是该方法要的内容，最后 API Key（第 2 种方式先 API Key，再粘 `?code=…` 那条地址）。下面是最常见的第 1 种方式（序号、账号、密码、API Key），末尾那行 `.` 很关键：读取器要在最后一个提示前用完输入，否则先报 EOF。
 
 ```bash
-printf '%s\n%s\n%s\n.\n' "$ACCOUNT" "$PASSWORD" "$SENSENOVA_API_KEY" | magpie plugin login sensenova
+printf '1\n%s\n%s\n%s\n.\n' "$ACCOUNT" "$PASSWORD" "$SENSENOVA_API_KEY" | magpie plugin login sensenova
 ```
+
+选第 2、3 种方式时只有一行粘贴内容：`printf '3\n%s\n%s\n.\n' "$COOKIE" "$SENSENOVA_API_KEY"`。
 
 **或者用 Magpie 应用自带的登录界面**，它不经过 CLI 的读取器。
 
@@ -118,13 +125,14 @@ printf '%s\n%s\n%s\n.\n' "$ACCOUNT" "$PASSWORD" "$SENSENOVA_API_KEY" | magpie pl
 | API Key | `~/.config/magpie/plugin-auth.json` 的 `key` | 调用 Token Plan 模型 |
 | 账号 + 密码（仅当你提供） | 同一文件的 `metadata.username` / `metadata.password` | **整个账号** |
 | 控制台 token | 同一文件的 `metadata`，或 `~/.sensenova-quota.json` | 读额度、续期 token |
-| 会话 cookie（仅当你提供） | 同上 | 不用密码换控制台 token |
+| 会话 cookie（本来就写在那个文件里时） | 同上 | 不用密码换控制台 token |
+| 用「浏览器登录」换到的控制台 token | `~/.sensenova-quota.json` | 读额度、续期 token |
 
 **账号密码能做的远不止读额度。** 它能登录 SenseNova 控制台、创建和删除 API Key，以及该账号能做的一切。把它交给插件，等于把整个账号交给 Magpie 的凭据文件——这是本插件请求的最重权限。**留空完全可用**（见第 5 节）。
 
 账号和密码只有两种来源，且都经过同意：你在登录提示里输入的内容，或你之前用 `snquota login --save-password` 存进 `~/.sensenova-quota.json` 的内容。**插件不从浏览器、系统钥匙串或其它 provider 的登录里扒凭据**，也不写 SenseNova 服务端的任何凭据设置。
 
-有一处本地文件会被写：如果凭据来自 `~/.sensenova-quota.json`（也就是你没填账号、走了第 5 节的第二条路），续期 token 后插件会把新 token **写回该文件**，免得 CLI 手里那份过期。条件是「登录时既没给账号也没给 cookie」——任给其一就不会回写。
+本地文件有两处会被写，都指向同一个 `~/.sensenova-quota.json`：一是用「浏览器登录」时，换到的 token **当场写进该文件**——Magpie 每个账号只存一份凭据，那份装的是 API Key，控制台 token 没有别的地方可放；二是凭据本来就来自该文件时（也就是你没填账号、走了登录的第 2 种方式或直接留空），续期 token 后插件会把新 token **写回该文件**，免得 CLI 手里那份过期。后者的条件是「登录时既没给账号也没给 cookie」——任给其一就不会回写。
 
 ### 2. 密码是明文存储的
 

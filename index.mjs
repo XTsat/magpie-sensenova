@@ -28,7 +28,15 @@
 
 import { PROVIDER, ICON, apiKeyOf, consoleAuthOf, fellBack, readAuth } from "./internal.mjs";
 import { FALLBACK_MODELS, NPM, createCatalog, toConfigModel, toProviderModel } from "./models.mjs";
-import { accountNameOf, QuotaError, readCredentials, readQuota, writeCredentials } from "./quota.mjs";
+import {
+  accountNameOf,
+  consoleLoginUrl,
+  loginWithCode,
+  QuotaError,
+  readCredentials,
+  readQuota,
+  writeCredentials,
+} from "./quota.mjs";
 import { fill, T } from "./i18n.mjs";
 
 const DEFAULT_QUOTA_TTL_MS = 60_000;
@@ -91,6 +99,42 @@ export async function SenseNovaPlugin({ client } = {}, options = {}) {
       __writable: !fromAuth.username && !fromAuth.cookie,
       __file: opts.credentialsFile,
     };
+  };
+
+  /**
+   * A fresh console credential record, seeded from the file.
+   *
+   * Signing in replaces only the token fields, so whatever else the `snquota`
+   * CLI or an earlier sign-in left in there (the IAM host, a session cookie) is
+   * carried forward instead of being dropped on the next read.
+   */
+  const consoleCfg = () => {
+    const file = readCredentials(opts.credentialsFile) ?? {};
+    return {
+      base: file.base,
+      client_id: file.client_id,
+      redirect_uri: file.redirect_uri,
+      access_token: file.access_token,
+      refresh_token: file.refresh_token,
+      expires_at: file.expires_at,
+      cookie: file.cookie,
+      username: file.username,
+      password: file.password,
+      iam_base: file.iam_base,
+    };
+  };
+
+  /**
+   * Where a console sign-in is kept.
+   *
+   * The tokens have nowhere else to live: Magpie stores one credential per
+   * account and that slot holds the API key, which is what signs the model
+   * calls. So the console side goes to the file the quota reader already reads,
+   * and the next `usage` call picks it up without a restart.
+   */
+  const saveConsole = (cfg) => {
+    writeCredentials(cfg, opts.credentialsFile);
+    quotaCache.clear();
   };
 
   /** Cache quota per account so a polled hook costs one request a minute. */
@@ -237,23 +281,22 @@ export async function SenseNovaPlugin({ client } = {}, options = {}) {
       },
 
       /**
-       * One method: the API key, plus the console account that can read quota.
+       * Three ways to hand over the console account, one API key field each.
        *
-       * The key is not asked here. Magpie asks an `api` method for the key
+       * The key is never asked here. Magpie asks an `api` method for the key
        * itself, in a masked field it draws after these prompts, and keeps it —
        * measured. A `key` prompt on top of that asks for the key twice, and the
        * second answer is the one that gets thrown away (the key `authorize`
-       * returns outranks the field the user just typed into). So the plugin
-       * only asks what the host cannot: the console account.
+       * returns outranks the field the user just typed into).
        *
-       * The console fields are optional and only asked for once, at sign-in,
-       * because the quota endpoint has no API-key path. Leaving them blank
-       * falls back to whatever `snquota` already stored on this machine.
+       * What differs is only how the console side is obtained. All three end in
+       * the same place: the tokens go to the credentials file, and the account
+       * row is named from the console token when it can be.
        */
       methods: [
         {
           type: "api",
-          label: T.methodLabel,
+          label: T.methodLabelAccount,
           prompts: [
             {
               type: "text",
@@ -283,6 +326,58 @@ export async function SenseNovaPlugin({ client } = {}, options = {}) {
            */
           async authorize() {
             return { type: "success" };
+          },
+        },
+        {
+          // An `oauth` method is the only kind the host opens a browser for
+          // (measured 0.1.1489): it shows `url`, and `method: "code"` puts a
+          // paste box under it for whatever the browser ends on. A loopback
+          // return is impossible here — the console's client pre-registers
+          // `https://platform.sensenova.cn` as its only redirect target (see
+          // `consoleLoginUrl`) — so the box is the only way back.
+          //
+          // The API key is asked here rather than left to the host: the host
+          // adds its own key field to `api` methods only, and the model calls
+          // need a key that the quota token is not.
+          type: "oauth",
+          label: T.methodLabelBrowser,
+          prompts: [
+            {
+              type: "password",
+              key: "apiKey",
+              message: T.promptBrowserKey,
+              placeholder: T.placeholderApiKey,
+            },
+          ],
+          authorize(inputs) {
+            const key = typeof inputs?.apiKey === "string" ? inputs.apiKey.trim() : "";
+            return {
+              url: consoleLoginUrl(consoleCfg()),
+              instructions: T.browserInstructions,
+              method: "code",
+              async callback(pasted) {
+                if (!key) return { type: "failed", error: T.browserNoKey };
+                const cfg = consoleCfg();
+                try {
+                  await loginWithCode(cfg, pasted);
+                } catch (e) {
+                  return { type: "failed", error: e?.message ?? String(e) };
+                }
+                saveConsole(cfg);
+                // `metadata` is what names the row and what `consoleAuthOf`
+                // reads back, and the host merges on `metadata.email`: returning
+                // the console account's own name updates the row that account
+                // already has instead of adding one per sign-in (measured — a
+                // key-only success lands as a fresh "API key …HohJ" row). The
+                // merge replaces `metadata` wholesale, so a password stored by
+                // the other method is gone afterwards; the tokens written above
+                // are what the quota reads from then on.
+                const name = accountNameOf(cfg);
+                return name
+                  ? { type: "success", key, email: name, metadata: { email: name } }
+                  : { type: "success", key };
+              },
+            };
           },
         },
       ],

@@ -7,10 +7,13 @@ import path from "node:path";
 import { extractModels, normalizeModel, toConfigModel, toProviderModel } from "../models.mjs";
 import {
   accountNameOf,
+  codeFromPaste,
   compact,
+  consoleLoginUrl,
   ensureToken,
   fmtNum,
   isExpired,
+  loginWithCode,
   parseJwt,
   readCredentials,
   toQuota,
@@ -306,3 +309,56 @@ test("accountNameOf 取不到时返回 undefined，不编一个", () => {
   assert.equal(accountNameOf({ access_token: jwt({ ext: { username: "   " } }) }), undefined);
   assert.equal(accountNameOf(undefined), undefined);
 });
+
+/* ------------------------------------------------- 一键登录：粘回调 / 粘 cookie */
+
+test("consoleLoginUrl 指向控制台授权端点，回调是控制台自己", () => {
+  const url = new URL(consoleLoginUrl({}));
+  assert.equal(url.origin, "https://platform.sensenova.cn");
+  assert.equal(url.pathname, "/oauth2/auth");
+  assert.equal(url.searchParams.get("client_id"), "nova");
+  assert.equal(url.searchParams.get("redirect_uri"), "https://platform.sensenova.cn");
+  // 不带 PKCE：粘回来的地址里没有 verifier 可对上。
+  assert.equal(url.searchParams.get("code_challenge"), null);
+  assert.ok((url.searchParams.get("state") ?? "").length >= 8);
+});
+
+test("codeFromPaste 认整条回调地址、裸 code，认不出来时返回 null", () => {
+  assert.equal(codeFromPaste("https://platform.sensenova.cn/?code=abc123&state=xyz"), "abc123");
+  assert.equal(codeFromPaste("  abc123def456  "), "abc123def456");
+  assert.equal(codeFromPaste("https://platform.sensenova.cn/?error=access_denied"), null);
+  assert.equal(codeFromPaste(""), null);
+  assert.equal(codeFromPaste(undefined), null);
+});
+
+test("loginWithCode 用粘来的 code 换令牌，不带 code_verifier", async () => {
+  const seen = [];
+  const fetchImpl = async (url, init) => {
+    seen.push({ url: String(url), body: String(init?.body ?? "") });
+    return new Response(
+      JSON.stringify({ access_token: "at-1", refresh_token: "rt-1", expires_in: 3600 }),
+      { status: 200, headers: { "content-type": "application/json" } }
+    );
+  };
+  const cfg = {};
+  await loginWithCode(cfg, "https://platform.sensenova.cn/?code=good-code", { fetchImpl });
+  assert.equal(seen.length, 1);
+  assert.match(seen[0].url, /\/oauth2\/token$/);
+  assert.match(seen[0].body, /code=good-code/);
+  assert.match(seen[0].body, /grant_type=authorization_code/);
+  assert.doesNotMatch(seen[0].body, /code_verifier/);
+  assert.equal(cfg.access_token, "at-1");
+  assert.equal(cfg.refresh_token, "rt-1");
+  assert.ok(cfg.expires_at > Math.floor(Date.now() / 1000));
+});
+
+test("loginWithCode 认不出 code 时不发请求", async () => {
+  let called = false;
+  const fetchImpl = async () => {
+    called = true;
+    return new Response("{}", { status: 200 });
+  };
+  await assert.rejects(() => loginWithCode({}, "???", { fetchImpl }), QuotaError);
+  assert.equal(called, false);
+});
+

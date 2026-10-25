@@ -53,11 +53,17 @@ export const ZH = {
   loginNoPermission: "该账号没有权限",
   loginTooFrequent: "操作过于频繁",
 
-  methodLabel: "SenseNova API Key",
+  methodLabelAccount: "填账号密码",
+  methodLabelBrowser: "浏览器登录",
   promptAccount: "可选：读额度用的 SenseNova 账号（下一步填 API Key，留空 = 用 snquota 已存的凭据）",
   promptPassword: "可选：账号密码（明文存在本机 plugin-auth.json，只用于读额度）",
   placeholderAccount: "手机号 / 邮箱",
   placeholderPassword: "留空 = 不保存密码",
+  promptBrowserKey: "浏览器登录只管读额度：模型调用要的 API Key 先填在这（必填，输入时不回显）",
+  placeholderApiKey: "API Key",
+  browserInstructions: "浏览器已经打开控制台登录页：登录完会跳到 https://platform.sensenova.cn/?code=… 那条打不开的地址，把整条地址粘到下面",
+  browserNoKey: "API Key 不能为空：浏览器登录只负责读额度，模型调用还得用它",
+  pasteNoCode: "没认出授权码：请粘贴登录后落地的那条完整地址（…?code=…），或直接粘 code",
 };
 
 /** The English half of those same labels, key for key. */
@@ -92,11 +98,17 @@ export const EN = {
   loginNoPermission: "This account has no permission",
   loginTooFrequent: "Too many attempts",
 
-  methodLabel: "SenseNova API Key",
+  methodLabelAccount: "Account and password",
+  methodLabelBrowser: "Sign in in a browser",
   promptAccount: "Optional: the SenseNova account for the quota (the API key follows; blank = the credentials snquota already stored)",
   promptPassword: "Optional: the account password (plaintext in this machine's plugin-auth.json, quota only)",
   placeholderAccount: "phone / email",
   placeholderPassword: "blank = do not store a password",
+  promptBrowserKey: "The browser sign-in covers only the quota: type the API key the model calls need first (required, typing stays hidden)",
+  placeholderApiKey: "API key",
+  browserInstructions: "The console sign-in page is open in your browser: after signing in it lands on a https://platform.sensenova.cn/?code=… address that won't load — paste that whole address below",
+  browserNoKey: "The API key can't be empty: the browser sign-in only covers the quota, the model calls need one",
+  pasteNoCode: "No authorization code found: paste the whole address you landed on (…?code=…), or the code itself",
 };
 
 /**

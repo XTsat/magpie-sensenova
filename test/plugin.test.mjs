@@ -233,3 +233,83 @@ test("包清单只声明图标，不再用示例值暗示插件选项", async ()
   const pkg = JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8"));
   assert.deepEqual(Object.keys(pkg.magpie), ["icon"]);
 });
+
+test("两条登录方式：账号密码（api）/ 浏览器登录（oauth），都只问宿主收不到的东西", async () => {
+  const plugin = await SenseNovaPlugin({}, {});
+  const methods = plugin.auth.methods;
+  assert.equal(methods.length, 2);
+  assert.deepEqual(
+    methods.map((m) => m.type),
+    ["api", "oauth"]
+  );
+  assert.deepEqual(
+    methods.map((m) => m.prompts.map((p) => p.key)),
+    [["email", "password"], ["apiKey"]]
+  );
+  // api 方法不能再问一遍宿主的 key 框；oauth 方法宿主根本不画那个框，才由插件问。
+  assert.equal(methods[0].prompts.some((p) => p.key === "key"), false);
+});
+
+test("浏览器登录是 oauth + code：宿主自己打开授权地址，落地地址粘回来", async () => {
+  const plugin = await SenseNovaPlugin({}, {});
+  const method = plugin.auth.methods[1];
+  const flow = method.authorize({ apiKey: "sk-test" });
+  // `method: "code"` 是宿主画粘贴框的依据；`auto` 会等一个本机回环，
+  // 而控制台只认自己那一个 redirect_uri，拿不到回环。
+  assert.equal(flow.method, "code");
+  assert.match(flow.url, /^https:\/\/platform\.sensenova\.cn\/oauth2\/auth\?/);
+  assert.match(flow.url, /redirect_uri=https%3A%2F%2Fplatform\.sensenova\.cn/);
+  assert.equal(typeof flow.callback, "function");
+  // 宿主会把它当说明文字显示，所以必须中英同显。
+  assert.match(flow.instructions, / \/ /);
+});
+
+test("浏览器登录没填 API Key：回调用中文说明失败，一个请求都不发", async () => {
+  const plugin = await SenseNovaPlugin({}, {});
+  const flow = plugin.auth.methods[1].authorize({ apiKey: "  " });
+  const real = globalThis.fetch;
+  let called = false;
+  globalThis.fetch = async () => {
+    called = true;
+    return new Response("{}", { status: 200 });
+  };
+  try {
+    const out = await flow.callback("https://platform.sensenova.cn/?code=abc12345");
+    assert.equal(out.type, "failed");
+    assert.match(out.error, /API Key/);
+    assert.equal(called, false);
+  } finally {
+    globalThis.fetch = real;
+  }
+});
+
+test("浏览器登录成功：控制台令牌落盘，API Key 作为凭据返回，账号行按控制台账号命名", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sensenova-"));
+  const file = path.join(dir, "quota.json");
+  const access = jwt({ ext: { username: "ada" } });
+  const plugin = await SenseNovaPlugin({}, { credentialsFile: file });
+  const flow = plugin.auth.methods[1].authorize({ apiKey: "sk-typed" });
+  const real = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input instanceof Request ? input.url : input);
+    if (url.endsWith("/oauth2/token")) {
+      return new Response(JSON.stringify({ access_token: access, refresh_token: "rt-1" }), { status: 200 });
+    }
+    throw new Error(`unexpected ${url}`);
+  };
+  try {
+    const out = await flow.callback("https://platform.sensenova.cn/?code=good-code");
+    assert.equal(out.type, "success");
+    // 模型调用用的凭据由插件返回：oauth 方法没有宿主的 key 框。
+    assert.equal(out.key, "sk-typed");
+    // 账号行按控制台账号命名：metadata.email 既是行名来源，也是下次读额度的入口。
+    assert.equal(out.email, "ada");
+    assert.deepEqual(out.metadata, { email: "ada" });
+    const saved = JSON.parse(fs.readFileSync(file, "utf8"));
+    assert.equal(saved.access_token, access);
+    assert.equal(saved.refresh_token, "rt-1");
+  } finally {
+    globalThis.fetch = real;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

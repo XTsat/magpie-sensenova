@@ -288,17 +288,16 @@ function buildAuthorize(cfg) {
 }
 
 async function exchangeCode(cfg, { code, verifier, redirectUri }, fetchImpl) {
-  const { res, data, text } = await postToken(
-    cfg,
-    {
-      grant_type: "authorization_code",
-      client_id: cfg.client_id || DEFAULT_CLIENT_ID,
-      code,
-      redirect_uri: redirectUri,
-      code_verifier: verifier,
-    },
-    fetchImpl
-  );
+  const form = {
+    grant_type: "authorization_code",
+    client_id: cfg.client_id || DEFAULT_CLIENT_ID,
+    code,
+    redirect_uri: redirectUri,
+  };
+  // 只有我们自己发起的 PKCE 流程才有 verifier；浏览器粘回来的那条路没有
+  // （授权地址不带 code_challenge，实测控制台客户端也不强制 PKCE）。
+  if (verifier) form.code_verifier = verifier;
+  const { res, data, text } = await postToken(cfg, form, fetchImpl);
   if (!res.ok || !data?.access_token) {
     const detail = data?.error_description || data?.error || text.slice(0, 200);
     throw new QuotaError(fill(T.exchangeFailed, { detail }));
@@ -408,6 +407,66 @@ async function renewWithPassword(cfg, fetchImpl) {
     url2 = abs;
   }
   throw new QuotaError(T.chainTooLong);
+}
+
+/* ------------------------------------------------------------ 一键登录入口 */
+
+/**
+ * 浏览器登录用的授权地址。
+ *
+ * 不带 PKCE：控制台的 `nova` 客户端不强制（实测换码时不要求 code_verifier，
+ * 带与不带都只回 `invalid_grant`），所以地址是固定的、可以在任何设备上打开。
+ *
+ * `redirect_uri` 必须是 `https://platform.sensenova.cn` 本身：实测这是该客户端
+ * **唯一**预注册的回调地址，换成 `http://127.0.0.1:<port>/…` 会被直接拒
+ * （`invalid_request: does not match any of the OAuth 2.0 Client's pre-registered
+ * redirect urls`）。所以拿不到「自动返回本机」的回环登录，只能让用户把落地
+ * 地址粘回来。
+ */
+export function consoleLoginUrl(cfg = {}) {
+  const base = (cfg.base || DEFAULT_BASE).replace(/\/$/, "");
+  const url = new URL(`${base}/oauth2/auth`);
+  url.search = new URLSearchParams({
+    client_id: cfg.client_id || DEFAULT_CLIENT_ID,
+    response_type: "code",
+    scope: "openid offline offline_access",
+    redirect_uri: cfg.redirect_uri || base,
+    state: randState(),
+  }).toString();
+  return url.toString();
+}
+
+/**
+ * 从粘贴内容里取出授权码：整条回调地址（`…/?code=…`）或裸 code 都接受。
+ *
+ * @returns {string|null}
+ */
+export function codeFromPaste(text) {
+  const s = typeof text === "string" ? text.trim() : "";
+  if (!s) return null;
+  try {
+    const code = new URL(s).searchParams.get("code");
+    if (code) return code;
+  } catch {
+    /* 不是 URL，按裸 code 处理 */
+  }
+  return /^[A-Za-z0-9._~+/=%-]{8,4096}$/.test(s) ? s : null;
+}
+
+/**
+ * 用浏览器登录后粘回来的回调地址换令牌。
+ *
+ * @param {object} cfg - 凭据对象，就地更新。
+ * @param {string} pasted - 回调地址或裸 code。
+ * @param {{fetchImpl?: Function}} [opts]
+ * @returns {Promise<object>} 同一个 cfg（已带 access_token / refresh_token）。
+ */
+export async function loginWithCode(cfg, pasted, { fetchImpl = fetch } = {}) {
+  const code = codeFromPaste(pasted);
+  if (!code) throw new QuotaError(T.pasteNoCode);
+  const base = (cfg.base || DEFAULT_BASE).replace(/\/$/, "");
+  await exchangeCode(cfg, { code, verifier: null, redirectUri: cfg.redirect_uri || base }, fetchImpl);
+  return cfg;
 }
 
 /**

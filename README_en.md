@@ -30,13 +30,18 @@ magpie plugin login sensenova
 
 You can also hand the repository path straight to `magpie plugin add <path to this repository>`.
 
-Sign-in asks three things, and the first two can be left blank:
+Sign-in first asks how to hand over the console account (needed for the quota); both routes lead to the same place:
 
-1. **Account** (optional) — used to read the console's credit quota; if you fill it in, the account row shows that name.
-2. **Password** (optional, not echoed as you type) — same.
-3. **API key** (required) — create one in the console → API-Key management; it is not echoed as you type either. Without it the provider cannot make any request.
+1. **Account and password** — a filled-in account is what the account row shows; the password is not echoed as you type and is stored in plaintext in this machine's credential file (see the privacy notice). Both fields may be left blank.
+2. **Sign in in a browser** — no password changes hands: the web UI opens the console's sign-in page for you, and when you are done the browser lands on a `https://platform.sensenova.cn/?code=…` address that won't load — paste that whole address back into the prompt. On the command line there is no browser to open, so the plugin prints the address for you to open and then waits for a `Code:`.
 
-Leaving the first two blank is fine: the plugin falls back to `~/.sensenova-quota.json`, written on this machine by the `snquota` CLI.
+Both routes ask for the **API key** (required, not echoed) — create one in the console → API-Key management. Without it the provider cannot make any request; route 2 asks for the key first, then opens the browser.
+
+Leaving route 1's fields blank is fine: the plugin falls back to `~/.sensenova-quota.json`, written on this machine by the `snquota` CLI. Console tokens obtained through route 2 go into that same file, so the next quota read picks them up.
+
+A successful browser sign-in updates the row that console account already had: it takes the API key you typed plus the console tokens, and the row is labelled with the console account's own name. A password stored there earlier by route 1 does **not** survive — re-run route 1 if you want it back as a renewal fallback.
+
+Why route 2 needs a paste: the console's sign-in client has only `https://platform.sensenova.cn` registered as a redirect target, and `http://127.0.0.1:<port>` is refused (measured), so the plugin cannot catch the browser redirect itself.
 
 ### If the prompts fail on Windows
 
@@ -48,11 +53,13 @@ magpie: read /dev/stdin: The handle is invalid.
 
 That is Magpie's own host code reading its standard input, not this plugin: every package using a text prompt behaves the same way. Two ways round it:
 
-**Answer on the command line instead.** Piped input works, and the answers are read in prompt order — account, password, API key. The trailing `.` line matters: with only three lines the reader runs out before the last prompt and reports EOF.
+**Answer on the command line instead.** Piped input works, and the answers are read in prompt order — first a route number (`1` account and password / `2` browser), then whatever that route asks, then the API key (route 2 asks for the key before the `?code=…` address). Below is the usual first route (number, account, password, API key); the trailing `.` line matters, because the reader has to finish its input before the last prompt or it reports EOF first.
 
 ```bash
-printf '%s\n%s\n%s\n.\n' "$ACCOUNT" "$PASSWORD" "$SENSENOVA_API_KEY" | magpie plugin login sensenova
+printf '1\n%s\n%s\n%s\n.\n' "$ACCOUNT" "$PASSWORD" "$SENSENOVA_API_KEY" | magpie plugin login sensenova
 ```
+
+Route 2 takes the key and one pasted address: `printf '2\n%s\n%s\n.\n' "$SENSENOVA_API_KEY" "$REDIRECT_URL"`.
 
 **Or use the Magpie app's own sign-in**, which does not go through the CLI reader at all.
 
@@ -118,13 +125,14 @@ What that means for Magpie:
 | API key | `~/.config/magpie/plugin-auth.json`, field `key` | Call the Token Plan models |
 | Account + password (only if you supply them) | same file, `metadata.username` / `metadata.password` | **The whole account** |
 | Console tokens | same file's `metadata`, or `~/.sensenova-quota.json` | Read quota, renew tokens |
-| Session cookie (only if you supply it) | as above | Trade for console tokens without a password |
+| Session cookie (when that file already carries one) | as above | Trade for console tokens without a password |
+| Console tokens obtained through "sign in in a browser" | `~/.sensenova-quota.json` | Read quota, renew tokens |
 
 **The account password does far more than read quota.** It can sign in to the SenseNova console, create and delete API keys, and do anything else that account can do. Handing it to the plugin means handing the whole account to Magpie's credential file — the heaviest permission this plugin asks for. **Leaving it blank works fine** (see 5).
 
 The account and password have only two possible origins, both consented to: what you typed into the sign-in prompt, or what you previously saved to `~/.sensenova-quota.json` with `snquota login --save-password`. **The plugin does not scrape credentials from a browser, the system keychain or another provider's sign-in**, and does not write to any credential setting on SenseNova's servers.
 
-One local file does get written: if the credentials came from `~/.sensenova-quota.json` (that is, you left the account fields blank and took the second route in 5), then after renewing a token the plugin **writes the new token back to that file** so the CLI's copy does not go stale. The condition is "neither an account nor a cookie was supplied at sign-in" — supply either one and nothing is written back.
+Two local writes both land in the same `~/.sensenova-quota.json`: first, when you sign in through a browser, the tokens it trades for are **written to that file straight away** — Magpie keeps one credential per account and that slot holds the API key, so console tokens have nowhere else to live; second, when the credentials already came from that file (that is, you left the account fields blank), then after renewing a token the plugin **writes the new token back to that file** so the CLI's copy does not go stale. The second one's condition is "neither an account nor a cookie was supplied at sign-in" — supply either one and nothing is written back.
 
 ### 2. The password is stored in plaintext
 
