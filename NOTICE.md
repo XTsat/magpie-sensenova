@@ -4,8 +4,8 @@
 
 `assets/sensenova.png` is SenseNova's icon, taken from
 `https://platform.sensenova.cn/favicon.ico` (which, despite the name and the
-`image/x-icon` response header, serves a 65×65 PNG). SenseNova and 商量 are
-SenseTime's marks and are SenseTime's property.
+`image/x-icon` response header, serves a 65×65 PNG). SenseNova (日日新) is
+SenseTime's mark and is SenseTime's property.
 
 It is included here for one reason: to identify the SenseNova provider in
 Magpie's provider list. Magpie reads it through the `auth.icon` hook and the

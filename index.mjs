@@ -1,5 +1,5 @@
 /**
- * SenseNova (商量 / 日日新) provider plugin for Magpie.
+ * SenseNova (日日新) provider plugin for Magpie.
  *
  * Two things in one package, because the platform splits them across two hosts:
  *
@@ -200,7 +200,8 @@ export async function SenseNovaPlugin({ client } = {}, options = {}) {
       cfg.provider ??= {};
       const was = cfg.provider[PROVIDER] ?? {};
       cfg.provider[PROVIDER] = {
-        name: "SenseNova",
+        // 网页版供应商列表直接显示这个字段；商汤的官方中文名在前，英文在后
+        name: "商汤日日新 SenseNova",
         npm: NPM,
         api: opts.baseURL ?? "https://token.sensenova.cn/v1",
         ...was,

@@ -2,7 +2,7 @@
 
 **English** | [中文](https://github.com/XTsat/magpie-sensenova/blob/main/README.md)
 
-A [Magpie](https://usemagpie.ai) provider plugin for **SenseNova** (商量 / 日日新, SenseTime). Install it and SenseNova's Token Plan models become available inside Magpie, while the console's credit quota shows up in the account row and in `magpie quota` — no dashboard tab needed. To get started, run `magpie plugin login sensenova` (an API key is required; account and password are optional and only needed for the quota display).
+A [Magpie](https://usemagpie.ai) provider plugin for **SenseNova** (日日新, SenseTime). Install it and SenseNova's Token Plan models become available inside Magpie, while the console's credit quota shows up in the account row and in `magpie quota` — no dashboard tab needed. To get started, run `magpie plugin login sensenova` (an API key is required; account and password are optional and only needed for the quota display).
 
 The quota appears in three places: the account row, `magpie quota`, and the gateway's `GET /v1/magpie/quotas` (window names and the unit carry both languages, as below). For what this plugin stores on your machine, which hosts it contacts and the known risks, see the ⚠️ privacy and security notice below.
 
@@ -32,7 +32,7 @@ You can also hand the repository path straight to `magpie plugin add <path to th
 
 Sign-in first asks how to hand over the console account (needed for the quota); both routes lead to the same place:
 
-1. **Account and password** — a filled-in account is what the account row shows; the password is not echoed as you type and is stored in plaintext in this machine's credential file (see the privacy notice). Both fields may be left blank.
+1. **账号密码登录 / API key** — a filled-in account is what the account row shows; the password is not echoed as you type and is stored in plaintext in this machine's credential file (see the privacy notice). Both fields may be left blank.
 2. **Sign in in a browser** — no password changes hands: the web UI opens the console's sign-in page for you, and when you are done the browser lands on a `https://platform.sensenova.cn/?code=…` address — the page refreshes itself quickly and wipes the address, so copy the whole URL immediately and paste it back into the prompt; if you miss it, just hit "reopen" under the prompt and go again. On the command line there is no browser to open, so the plugin prints the address for you to open and then waits for a `Code:`.
 
 Both routes ask for the **API key** (required, not echoed) — create one in the console → API-Key management. Without it the provider cannot make any request; route 2 asks for the key first, then opens the browser.

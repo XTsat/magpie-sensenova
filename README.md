@@ -2,7 +2,7 @@
 
 **中文** ｜ [English](https://github.com/XTsat/magpie-sensenova/blob/main/README_en.md)
 
-这是 [Magpie](https://usemagpie.ai) 的 **SenseNova**（商量 / 日日新，商汤）provider 插件。装上之后，你可以在 Magpie 里直接用 SenseNova Token Plan 的模型，并在账号行与 `magpie quota` 里看到控制台的积分额度，不用另开网页。装完执行 `magpie plugin login sensenova`（填 API Key，可选填账号与密码以显示额度）即可开始使用。
+这是 [Magpie](https://usemagpie.ai) 的 **SenseNova**（日日新，商汤）provider 插件。装上之后，你可以在 Magpie 里直接用 SenseNova Token Plan 的模型，并在账号行与 `magpie quota` 里看到控制台的积分额度，不用另开网页。装完执行 `magpie plugin login sensenova`（填 API Key，可选填账号与密码以显示额度）即可开始使用。
 
 额度出现在账号行、`magpie quota` 与网关的 `GET /v1/magpie/quotas` 三处（窗口名与单位中英并列，见下例）。本插件在你的机器上存了什么、会连哪些主机、有哪些已知风险，见下方「⚠️ 隐私与安全须知」。
 
@@ -32,7 +32,7 @@ magpie plugin login sensenova
 
 登录会先让你选一种方式把控制台账号交出来（读额度用），两种都通向同一件事：
 
-1. **填账号密码**——账号填了会显示在账号行上；密码输入时不回显，且明文存在本机凭据文件里（见「隐私与安全须知」）。两项都可以留空。
+1. **账号密码登录 / API key**——账号填了会显示在账号行上；密码输入时不回显，且明文存在本机凭据文件里（见「隐私与安全须知」）。两项都可以留空。
 2. **浏览器登录**——密码不用交给插件：网页版会直接替你把控制台的授权页打开，登录完浏览器会落到一条 `https://platform.sensenova.cn/?code=…` 地址——落地后页面很快会自己刷新、地址会被清掉，要立刻复制整条地址粘回提示框；没赶上的话点提示框下面的「重新打开」再来一遍就行。命令行下没有浏览器可开，插件会打印这条地址让你自己打开，然后等一个 `Code:`。
 
 两种方式都要 **API Key**（必填，输入时不回显）——在控制台 → API-Key 管理里创建。没有它，provider 发不出任何请求；第 2 种方式先问 API Key，再开浏览器。

@@ -53,9 +53,9 @@ export const ZH = {
   loginNoPermission: "该账号没有权限",
   loginTooFrequent: "操作过于频繁",
 
-  methodLabelAccount: "填账号密码",
+  methodLabelAccount: "账号密码登录 / API key",
   methodLabelBrowser: "浏览器登录",
-  promptAccount: "可选：读额度用的 SenseNova 账号（下一步填 API Key，留空 = 用 snquota 已存的凭据）",
+  promptAccount: "可选：读额度用的 SenseNova 账号（留空 = 用 snquota 已存的凭据）",
   promptPassword: "可选：账号密码（明文存在本机 plugin-auth.json，只用于读额度）",
   placeholderAccount: "手机号 / 邮箱",
   placeholderPassword: "留空 = 不保存密码",
@@ -98,9 +98,9 @@ export const EN = {
   loginNoPermission: "This account has no permission",
   loginTooFrequent: "Too many attempts",
 
-  methodLabelAccount: "Account and password",
+  methodLabelAccount: "账号密码登录 / API key",
   methodLabelBrowser: "Sign in in a browser",
-  promptAccount: "Optional: the SenseNova account for the quota (the API key follows; blank = the credentials snquota already stored)",
+  promptAccount: "Optional: the SenseNova account for the quota (blank = the credentials snquota already stored)",
   promptPassword: "Optional: the account password (plaintext in this machine's plugin-auth.json, quota only)",
   placeholderAccount: "phone / email",
   placeholderPassword: "blank = do not store a password",
