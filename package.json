@@ -16,6 +16,7 @@
     "assets/",
     "README.md",
     "NOTICE.md",
+    "CHANGELOG.md",
     "LICENSE"
   ],
   "keywords": [
@@ -33,11 +34,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/aqiu817/magpie-sensenova.git"
+    "url": "git+https://github.com/XTsat/magpie-sensenova.git"
   },
-  "homepage": "https://github.com/aqiu817/magpie-sensenova#readme",
+  "homepage": "https://github.com/XTsat/magpie-sensenova#readme",
   "bugs": {
-    "url": "https://github.com/aqiu817/magpie-sensenova/issues"
+    "url": "https://github.com/XTsat/magpie-sensenova/issues"
   },
   "engines": {
     "node": ">=20"

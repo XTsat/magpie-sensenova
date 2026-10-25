@@ -30,8 +30,8 @@
 | 文件 | 必选 | 职责 |
 |------|------|------|
 | `README.md` | ✅ | 英文主文档；同时是 Magpie 插件详情页渲染的**唯一披露面** |
-| `CHANGELOG.md` | ⚠️ 待补 | 变更日志（格式见 7.1）；仓库当前**尚无**此文件，首次需要时按模板格式创建 |
-| `LICENSE` | ✅ | 许可证（MIT，`Copyright (c) 2026 aqiu817`） |
+| `CHANGELOG.md` | ✅ | 变更日志（格式见 7.1）；日常改动只追加到 `[Unreleased]`，发版时才切版本段 |
+| `LICENSE` | ✅ | 许可证（MIT，`Copyright (c) 2026 XTsat`） |
 | `index.mjs` | ✅ | 插件入口：导出唯一函数 `SenseNovaPlugin`，返回宿主要调用的 `config` / `provider` / `auth` 钩子 |
 | `internal.mjs` | ✅ | 与入口、测试共享的小工具：`PROVIDER`、`ICON`、`normalizeKey`、`readAuth`、`apiKeyOf`、`fellBack`、`consoleAuthOf` |
 | `quota.mjs` | ✅ | 控制台额度客户端：凭据读写、cookie jar、三条 token 续期路径、取数与额度映射；**控制台内部端点路径的唯一存放处** |
@@ -44,7 +44,7 @@
 | `.gitignore` | ✅ | Git 排除清单：`node_modules/`、`*.log`、`.DS_Store` |
 | `test/` | ✅ | `node:test` 测试（`plugin.test.mjs`、`quota.test.mjs`、`i18n.test.mjs`），**不随包发布** |
 
-> ⚠️ 上游元数据不一致：`package.json` 的 `repository` / `homepage` / `bugs` 与 `README.md`、`LICENSE` 都指向 `github.com/aqiu817/magpie-sensenova`，而本机 clone 的 `origin` 是 `github.com/XTsat/magpie-sensenova`。改动这两处前先与用户确认哪一个是权威上游，不要单方面「修正」。
+> **权威上游**：`github.com/XTsat/magpie-sensenova`（2026-10-25 经用户确认）。`package.json` 的 `repository` / `homepage` / `bugs`、`README.md`、`LICENSE` 已统一指向此处，本机 clone 的 `origin` 与之一致。旧的 `aqiu817/magpie-sensenova` 只保留在历史提交中，**不要再写回任何元数据**。
 
 ---
 
@@ -63,6 +63,7 @@ magpie-sensenova/
 ├── assets/sensenova.png   # 供应商图标
 ├── test/                  # node:test 测试，不发布
 ├── README.md              # 英文主文档（用户可见的唯一披露面）
+├── CHANGELOG.md           # 变更日志（面向使用者，见 7.1）
 ├── NOTICE.md              # 商标、端点、共享逻辑声明
 ├── LICENSE
 ├── .gitattributes
@@ -229,7 +230,7 @@ magpie-sensenova/
 
 ### 7.1 CHANGELOG 维护
 
-> 现状：仓库**还没有** `CHANGELOG.md`（变更历史此前只写在 `git log` 的提交正文里）。首次需要记录变更时按下面的格式创建，不要另立格式。
+> 现状：`CHANGELOG.md` 已按本格式建立（首个条目是仓库地址迁移）；更早的历史变更只写在 `git log` 的提交正文里，不回填。
 
 #### 流程
 

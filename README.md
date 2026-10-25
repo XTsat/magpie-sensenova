@@ -567,7 +567,7 @@ someone else's repository, which is why it is not done here by default.
 The list is fetched at most every six hours, and Magpie ships a built-in copy as a fallback.
 `MAGPIE_PLUGIN_MARKET=<url>` swaps in another list (`off` means use only the built-in copy).
 
-The `repository` / `homepage` / `bugs` fields in `package.json` point at `aqiu817/magpie-sensenova`, and the
+The `repository` / `homepage` / `bugs` fields in `package.json` point at `XTsat/magpie-sensenova`, and the
 repository carries the `magpie-plugin` topic, so it is discoverable through route 1 today. Routes 2 and 3
 are opt-in and not done.
 
