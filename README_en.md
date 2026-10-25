@@ -33,7 +33,7 @@ You can also hand the repository path straight to `magpie plugin add <path to th
 Sign-in first asks how to hand over the console account (needed for the quota); both routes lead to the same place:
 
 1. **Account and password** — a filled-in account is what the account row shows; the password is not echoed as you type and is stored in plaintext in this machine's credential file (see the privacy notice). Both fields may be left blank.
-2. **Sign in in a browser** — no password changes hands: the web UI opens the console's sign-in page for you, and when you are done the browser lands on a `https://platform.sensenova.cn/?code=…` address that won't load — paste that whole address back into the prompt. On the command line there is no browser to open, so the plugin prints the address for you to open and then waits for a `Code:`.
+2. **Sign in in a browser** — no password changes hands: the web UI opens the console's sign-in page for you, and when you are done the browser lands on a `https://platform.sensenova.cn/?code=…` address — the page refreshes itself quickly and wipes the address, so copy the whole URL immediately and paste it back into the prompt; if you miss it, just hit "reopen" under the prompt and go again. On the command line there is no browser to open, so the plugin prints the address for you to open and then waits for a `Code:`.
 
 Both routes ask for the **API key** (required, not echoed) — create one in the console → API-Key management. Without it the provider cannot make any request; route 2 asks for the key first, then opens the browser.
 
