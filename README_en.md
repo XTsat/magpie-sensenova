@@ -2,7 +2,7 @@
 
 **English** | [中文](https://github.com/XTsat/magpie-sensenova/blob/main/README.md)
 
-A [Magpie](https://usemagpie.ai) provider plugin for **SenseNova** (日日新, SenseTime). Install it and SenseNova's Token Plan models become available inside Magpie, while the console's credit quota shows up in the account row and in `magpie quota` — no dashboard tab needed. To get started, run `magpie plugin login sensenova` (an API key is required; account and password are optional and only needed for the quota display).
+A [Magpie](https://usemagpie.ai) provider plugin for **SenseNova** (日日新, SenseTime). Install it and SenseNova's Token Plan models become available inside Magpie, while the console's credit quota shows up in the account row and in `magpie quota` — no dashboard tab needed. To get started, run `magpie plugin login sensenova` (an API key is required, plus an account name for the quota display — the password may stay blank).
 
 The quota appears in three places: the account row, `magpie quota`, and the gateway's `GET /v1/magpie/quotas` (window names and the unit carry both languages, as below). For what this plugin stores on your machine, which hosts it contacts and the known risks, see the ⚠️ privacy and security notice below.
 
@@ -32,12 +32,14 @@ You can also hand the repository path straight to `magpie plugin add <path to th
 
 Sign-in first asks how to hand over the console account (needed for the quota); both routes lead to the same place:
 
-1. **账号密码登录 / API key** — a filled-in account is what the account row shows; the password is not echoed as you type and is stored in plaintext in this machine's credential file (see the privacy notice). Both fields may be left blank.
+1. **账号密码登录 / API key** — the account name is required: Magpie keeps rows apart by it, and it also decides where this account's console tokens live. The password may stay blank; it is not echoed as you type, and if you do fill it in it is stored in plaintext in this machine's credential file (see the privacy notice).
 2. **Sign in in a browser** — no password changes hands: the web UI opens the console's sign-in page for you, and when you are done the browser lands on a `https://platform.sensenova.cn/?code=…` address — the page refreshes itself quickly and wipes the address, so copy the whole URL immediately and paste it back into the prompt; if you miss it, just hit "reopen" under the prompt and go again. On the command line there is no browser to open, so the plugin prints the address for you to open and then waits for a `Code:`.
 
 Both routes ask for the **API key** (required, not echoed) — create one in the console → API-Key management. Without it the provider cannot make any request; route 2 asks for the key first, then opens the browser.
 
-Leaving route 1's fields blank is fine: the plugin falls back to `~/.sensenova-quota.json`, written on this machine by the `snquota` CLI. Console tokens obtained through route 2 go into that same file, so the next quota read picks them up.
+Leaving the account name blank is not fine: the sign-in is refused outright. Magpie merges account rows by that name, and a blank one never merges, so every sign-in adds another `API key …last4` row — and those rows then all want the same console token, which is exactly how one account ended up as several rows showing identical numbers.
+
+A blank password is the easy path: the quota uses this account's existing console token (from `~/.sensenova-quota.json`, written on this machine by the `snquota` CLI, or from a token obtained earlier through route 2). Console tokens obtained through route 2 go into that same file, under that same account name, so the next quota read picks them up.
 
 A successful browser sign-in updates the row that console account already had: it takes the API key you typed plus the console tokens, and the row is labelled with the console account's own name. A password stored there earlier by route 1 does **not** survive — re-run route 1 if you want it back as a renewal fallback.
 
@@ -102,9 +104,11 @@ Context length and output ceiling are not published by the platform, so the buil
 
 What that means for Magpie:
 
-- Add two keys from the same account and both rows show **exactly the same numbers**.
+- Add two keys from the same account and both rows show **exactly the same numbers** — they are rows of one account, reading the same console token.
 - Magpie's "when one runs out, switch to the next" behaviour fails here — it assumes each key has its own allowance, while they share one pool. **Adding keys does not add quota.**
 - More quota means **a different SenseNova account**.
+
+The other way round, **different accounts read separately**: console tokens are stored per account name typed at sign-in, and each row only ever uses its own, so two accounts show two real sets of numbers and never borrow from one another.
 
 ## Known limits
 
@@ -123,16 +127,19 @@ What that means for Magpie:
 | Credential | Stored in | What it can do |
 | --- | --- | --- |
 | API key | `~/.config/magpie/plugin-auth.json`, field `key` | Call the Token Plan models |
-| Account + password (only if you supply them) | same file, `metadata.username` / `metadata.password` | **The whole account** |
-| Console tokens | same file's `metadata`, or `~/.sensenova-quota.json` | Read quota, renew tokens |
+| Account name (required at sign-in) | same file, `metadata.email` | Keep account rows apart; decide where this account's console tokens live |
+| Password (only if you supply it) | same file, `metadata.password` | **The whole account** |
+| Console tokens | `~/.sensenova-quota.json` under `accounts.<account name>`, or the file's top-level single-account record | Read quota, renew tokens |
 | Session cookie (when that file already carries one) | as above | Trade for console tokens without a password |
-| Console tokens obtained through "sign in in a browser" | `~/.sensenova-quota.json` | Read quota, renew tokens |
+| Console tokens obtained through "sign in in a browser" | `~/.sensenova-quota.json` under `accounts.<account name>` | Read quota, renew tokens |
 
 **The account password does far more than read quota.** It can sign in to the SenseNova console, create and delete API keys, and do anything else that account can do. Handing it to the plugin means handing the whole account to Magpie's credential file — the heaviest permission this plugin asks for. **Leaving it blank works fine** (see 5).
 
 The account and password have only two possible origins, both consented to: what you typed into the sign-in prompt, or what you previously saved to `~/.sensenova-quota.json` with `snquota login --save-password`. **The plugin does not scrape credentials from a browser, the system keychain or another provider's sign-in**, and does not write to any credential setting on SenseNova's servers.
 
-Two local writes both land in the same `~/.sensenova-quota.json`: first, when you sign in through a browser, the tokens it trades for are **written to that file straight away** — Magpie keeps one credential per account and that slot holds the API key, so console tokens have nowhere else to live; second, when the credentials already came from that file (that is, you left the account fields blank), then after renewing a token the plugin **writes the new token back to that file** so the CLI's copy does not go stale. The second one's condition is "neither an account nor a cookie was supplied at sign-in" — supply either one and nothing is written back.
+Console tokens are written to `~/.sensenova-quota.json` under **that account's own entry** (`accounts.<account name>`): Magpie keeps one credential per account and that slot holds the API key, so console tokens have nowhere else to live. A browser sign-in writes the tokens it trades for straight away, and a renewed token goes back into the same entry. Other accounts' entries and the file's top-level record (the single-account one written by the `snquota` CLI) are left untouched.
+
+That top-level record is borrowed in only two cases: the account name inside its token matches this row, or the token yields no account name at all (an older-format file) and this row has no tokens of its own. A mismatched name is never borrowed — **that borrowing is exactly what made several rows show one and the same quota, and it is why it had to go.**
 
 ### 2. The password is stored in plaintext
 
@@ -152,15 +159,15 @@ The renewal order is `refresh_token` → session cookie → account password, an
 
 ### 5. If you would rather not store a password, leave it blank
 
-Both the account and password fields at sign-in can be left empty. Three ways to run this, and what each costs:
+**The account name is required; the password can stay blank forever.** With a blank password the plugin only uses tokens. Three ways to run this, and what each costs:
 
 | Approach | What lands where | For whom |
 | --- | --- | --- |
-| **API key only** | Just `key` | You want model calls and do not care about the quota display |
-| **Leave account and password blank** | The plugin reads `~/.sensenova-quota.json`, written by `snquota` (usually holds a refresh token) | You want the quota shown but will not hand the account password to Magpie |
-| **Fill in the account** | Plaintext into `plugin-auth.json` | You have no other token source and accept the risks in 1 and 7 |
+| **Account name only** | `metadata.email` (a name, not a secret) | You want the quota shown but will not hand the account password to Magpie |
+| **Account name + browser sign-in** | One console-token entry under that account name; the password never passes through the plugin | Same, and you have no token yet |
+| **Account name + password** | Plaintext into `plugin-auth.json` under `metadata.password` | You have no other token source and accept the risks in 1 and 7 |
 
-If you leave both blank and that config file does not exist either, the quota reports an error asking you to sign in again — **model calls are unaffected either way.**
+API key only, no quota, also works: fill in the account name anyway (anything that identifies the account to you) and the quota reports an error asking you to sign in, **with no effect on model calls**. A blank account name refuses the sign-in — Magpie uses it to keep rows apart, and a blank one only ever adds a duplicate row.
 
 ### 6. Which hosts it talks to
 
@@ -215,4 +222,4 @@ Of these four, only the first needs your judgement — the plugin can carry the 
 - It does not cache prompts or responses.
 - It does not write to any credential setting on SenseNova's servers.
 - It does not render any UI of its own inside Magpie, and has no language setting: every string it shows is fixed and bilingual.
-- It does not write back to `~/.sensenova-quota.json`, **except** when the credentials came from that file and a token was renewed (see the end of 1).
+- It does not touch the top-level single-account record in `~/.sensenova-quota.json`; it only writes this account's own entry (`accounts.<account name>`), holding the token from sign-in and any renewed token (see the end of 1).

@@ -121,24 +121,118 @@ export function readCredentials(file = configPath()) {
   }
 }
 
-export function writeCredentials(cfg, file = configPath()) {
+function saveFile(payload, file) {
+  fs.writeFileSync(file, `${JSON.stringify(payload, null, 2)}\n`, { mode: 0o600 });
   try {
-    // Internal bookkeeping keys are all `__`-prefixed, and none of them belong
-    // in the file: the CLI reads it back, and flags like `__writable` are
-    // per-call. Strip by prefix so a new one can never leak by being forgotten.
-    const rest = Object.fromEntries(Object.entries(cfg).filter(([k]) => !k.startsWith("__")));
-    fs.writeFileSync(file, `${JSON.stringify({ ...rest, saved_at: new Date().toISOString() }, null, 2)}\n`, {
-      mode: 0o600,
-    });
-    try {
-      fs.chmodSync(file, 0o600);
-    } catch {
-      /* Windows 上忽略 */
-    }
-    return true;
+    fs.chmodSync(file, 0o600);
   } catch {
-    return false;
+    /* Windows 上忽略 */
   }
+}
+
+/* -------------------------------------------------------- 分账号的凭据 */
+
+/**
+ * 文件里放「按账号分开的令牌」的那一段。
+ *
+ * 顶层的 `access_token` 等字段是 snquota 命令行写的单账号记录，本插件不动它；
+ * 自己拿到的每份令牌写进 `accounts[<槽位>]`。分成两段是因为账号行可以有好几
+ * 个，而额度是账号级的：一个令牌只属于一个控制台账号，混在一个顶层记录里
+ * 就只能有最后一个登录的账号的内容 —— 界面上就是几行一模一样的额度。
+ */
+const ACCOUNTS = "accounts";
+
+/** 一条账号记录该落盘的字段：令牌与它的续期材料。密码留在宿主的登录记录里。 */
+const RECORD_FIELDS = [
+  "base",
+  "client_id",
+  "redirect_uri",
+  "access_token",
+  "refresh_token",
+  "expires_at",
+  "id_token",
+  "cookie",
+  "iam_base",
+];
+
+/**
+ * 这条凭据在文件里占的槽位。
+ *
+ * 有账号名就用账号名：同一账号下的多把 API Key 共用一份控制台令牌，这正是
+ * 「额度按账户计算」的语义，也是一个账号只能有一个令牌的原因。没有账号名时
+ * 退回 API Key 的指纹 —— 槽位必须唯一，否则两个账号行会读到同一份令牌。
+ *
+ * @param {{name?: string, key?: string}} input
+ * @returns {string|undefined}
+ */
+export function credentialSlotOf({ name, key } = {}) {
+  const named = typeof name === "string" ? name.trim() : "";
+  if (named) return named;
+  const raw = typeof key === "string" ? key.trim() : "";
+  if (!raw) return undefined;
+  return `key:${crypto.createHash("sha256").update(raw).digest("hex").slice(0, 12)}`;
+}
+
+const accountsOf = (file) =>
+  file && typeof file[ACCOUNTS] === "object" && file[ACCOUNTS] !== null ? file[ACCOUNTS] : {};
+
+const recordOf = (cfg) =>
+  Object.fromEntries(RECORD_FIELDS.filter((f) => cfg?.[f] !== undefined).map((f) => [f, cfg[f]]));
+
+/** 顶层那组字段（老文件的单账号记录），去掉 `accounts` 与内部记账键。 */
+const legacyOf = (file) =>
+  Object.fromEntries(Object.entries(file ?? {}).filter(([k]) => k !== ACCOUNTS && !k.startsWith("__")));
+
+/**
+ * 某个槽位的控制台凭据；没有就返回空对象。
+ *
+ * 顶层那份单账号记录只有在它确实属于这个账号时才算数：令牌里带着账号名，
+ * 对不上就是别人的账号。令牌解不出账号名时只能当成这台机器唯一那份（老文件的
+ * 情形），除此之外一律不借用 —— 借用的结果就是多个账号行显示同一份额度。
+ *
+ * @param {object|null} file - readCredentials 的结果。
+ * @param {string|undefined} slot - credentialSlotOf 的返回值。
+ * @returns {object}
+ */
+export function readAccountCredentials(file, slot) {
+  if (!slot || !file || typeof file !== "object") return {};
+  const own = accountsOf(file)[slot];
+  if (own && typeof own === "object") return { ...own };
+  const owner = accountNameOf(file);
+  const hasToken = typeof file.access_token === "string" || typeof file.refresh_token === "string";
+  if (owner === slot || (owner === undefined && hasToken)) return legacyOf(file);
+  return {};
+}
+
+/** 写文件的串行队列，见 writeAccountCredentials 的说明。 */
+let writeChain = Promise.resolve();
+
+/**
+ * 把一条令牌写回它自己的槽位，顶层那份（命令行的）保持不动。
+ *
+ * 写是「读整份、改一格、再写整份」，而 host 是**每个账号行各问一次**额度：两行
+ * 同时续期时，后写的会把前一格刚拿到的令牌盖掉，于是下一次读取又得重新登录。
+ * 因此所有写操作排进同一个队列串行执行。
+ *
+ * @param {object} cfg - 含令牌字段的凭据。
+ * @param {string|undefined} slot - credentialSlotOf 的返回值。
+ * @param {string} [file]
+ * @returns {Promise<boolean>}
+ */
+export function writeAccountCredentials(cfg, slot, file = configPath()) {
+  if (!slot) return Promise.resolve(false);
+  const run = writeChain.then(() => {
+    try {
+      const current = readCredentials(file) ?? {};
+      const accounts = { ...accountsOf(current), [slot]: { ...recordOf(cfg), saved_at: new Date().toISOString() } };
+      saveFile({ ...legacyOf(current), [ACCOUNTS]: accounts }, file);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+  writeChain = run.catch(() => {});
+  return run;
 }
 
 /** token 是否已过期（留 60 秒余量）。非 JWT 且无 expires_at 时返回 false（无法判断就先试）。 */

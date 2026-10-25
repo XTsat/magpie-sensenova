@@ -103,15 +103,16 @@ magpie-sensenova/
 2a. **不要在 `prompts` 里再放一条 `key` 提问**：`api` 类型的方法走完自家提示后，宿主**总会**再画一个遮蔽输入框要 API Key 并把它存成凭据（实测 0.1.1489，网页版与 CLI 同序：提示在前、key 框在后）。再放一份 `key` 提问就是问两遍，而且 `authorize` 一旦返回 `key`，那个值会**盖掉**用户在框里填的（实测：两次填不同的假 key，存下的是 `authorize` 返回的那个；`authorize` 返回 `{ type: "success" }` 时存下的才是框里那个）。`authorize` 的 `inputs` 里**没有**用户填进框的值（实测），所以「空 key」只能由宿主把关。`keyless: true` 会让宿主跳过该框、以空串当 key 交给插件，本插件没用它。
 3. **额度窗口必须带 `amount`（已用量）**：只有 `used` + `limit` 时 Magpie 会渲染成 `0 / limit`；`display` 必须用 `compact()` 生成，才能与 Magpie 自身格式对齐。`amount` 不在官方插件文档的窗口字段列表里，属于实测结论。
 4. **`remaining` 缺失或非有限值时跳过该窗口，绝不默认 0**：宁可不上报，也不要在卡片上编造 `0 / limit`。
-5. **凭据文件里 `__` 前缀键按前缀整体剥离，不用手写白名单**：曾因白名单漏掉 `__writable` 而把内部标记写进用户的 CLI 配置文件。
-6. **只有「控制台凭据来自 `~/.sensenova-quota.json`」时才回写该文件**（`__writable = !fromAuth.username && !fromAuth.cookie`）；`credentialsFile` 只改写入路径，不能关闭回写。
+5. **凭据文件里 `__` 前缀键按前缀整体剥离，不用手写白名单**：曾因白名单漏掉 `__writable` 而把内部标记写进用户的 CLI 配置文件（现在写的是 `legacyOf`，照样按前缀剥）。
+6. **控制台令牌按账号分槽存放，只写自己那一格**：`~/.sensenova-quota.json` 的 `accounts.<槽位>`，槽位来自 `credentialSlotOf`（登录时填的账号名；没名字时退回 API Key 指纹）。顶层那份单账号记录是 `snquota` CLI 的，**只读、不改写**——只在令牌里的账号名与该行一致、或令牌解不出账号名且该行还没有自己的令牌时才借给它。`credentialsFile` 只改读写路径。**任何「让一行借用别的行令牌」的改动都是回归**：那正是「登录两个账号却看到四行一模一样的额度」的成因。
+6a. **读额度的缓存键必须带上槽位**（`${apiKeyOf(auth) ?? ""}\u0000${slot ?? ""}`）：同一个 API Key 登过两个账号时，只按 key 缓存会让第二行拿到第一行的数字。
 7. **额度是账户级语义**：同一账号下所有 API Key 共用一个积分池，多填 Key 不会多额度。文档中这条警告必须保留。
 8. **续期顺序固定为 `refresh_token` → 会话 cookie → 账号密码，第一步成功即止**；密码是最后手段，调整顺序等于扩大暴露面。密码明文存储、明文传输是**已披露事实**，任何文档都不得写成「已加密」。
 9. **中英两张文案表必须键集合一致**：新增任何一条面向用户的文案都要同时进 `ZH` 与 `EN`，否则 `test/i18n.test.mjs` 的对称性测试直接失败；英文措辞沿用控制台自己的（General Pool / Flash-Lite Dedicated Pool / credits）。
 10. **`fetch` 钩子必须克隆 `Request`，不能按 URL 重建**：否则 POST 的 body 会静默丢失（曾是两个真实 bug 之一，有回归测试）。
 11. **零依赖是硬约束**：只用 Node 内置模块（`node:` 前缀）与全局 `fetch`；新增第三方依赖会破坏「迁入 community 仓库无需改代码」的承诺，必须先与用户确认。
 12. **纯源码仓库**：被 Magpie 按仓库安装时读的是当前代码，所以被加载的文件必须已提交，且不要引入任何构建产物。
-13. **README 不写测试、构建与开发细节**：面向使用者的文档只讲怎么装、怎么配、怎么看额度、有什么限制与风险；测试数与覆盖点只在 `AGENTS.md` 的 3 与 8.3 记录（历史测试数 50 → 53 → 55 → 70 → 57 → 52 → 53 → 61），增删测试时改那里。
+13. **README 不写测试、构建与开发细节**：面向使用者的文档只讲怎么装、怎么配、怎么看额度、有什么限制与风险；测试数与覆盖点只在 `AGENTS.md` 的 3 与 8.3 记录（历史测试数 50 → 53 → 55 → 70 → 57 → 52 → 53 → 61 → 68），增删测试时改那里。
 14. 不要提交 `node_modules/`、`*.log`、`.DS_Store`；全仓库强制 LF。
 15. **文案一律中英同显，不要加语言开关**：宿主不向插件传任何 locale（实测宿主 bundle 里 `locale`/`language`/`Intl` 零命中），provider 插件也拿不到网页版「选项」JSON 编辑器（它只对 gateway/middleware 出现，实测 0.1.1489）；插件自带的 settings 面板则会让真实浏览器整页卡死（Chrome「页面没有响应」），已整块移除（`magpie.panels`、`panel/`、`package.json` 的 `magpie.options` 都不再存在）。因此 `i18n.mjs` 只保留一张表 `T`，每条都是 `pair(ZH[k], EN[k])` → `中文 / English`，两半相同时只写一遍；额度窗口名要按「两半各自成句」拼（`通用积分池 · 5 小时窗口 / General Pool · 5h window`），不能交叉拼成半中半英。**新增文案只能进这张表，禁止再引入 locale/语言选项或按语言分表**，`test/i18n.test.mjs` 钉住了键集合对称与「表里没有 locale」。
 16. **`oauth` 方法的实测约定**（Magpie 0.1.1489）：返回 `method: "code"` 才会在网页版出现粘贴框、并由宿主 `api("open", { url })` 打开浏览器；`callback` 拿到的是粘回来的整条地址。带 `key` 的成功返回会被宿主存成 `{ type: "api", key, metadata }`（`access` 字段被丢弃），所以 API Key 就是唯一凭据。返回 `metadata.email` 会让宿主**按邮箱合并到已有那一行**（key-only 则新增一行「API Key …xxxx」），合并会**整体替换 `metadata`**，之前存的密码随之消失——这是当前选择（避免堆账号行）的已知代价，改回 key-only 就会变成每次登录加一行。`authorize` 只收到 `inputs` 一个参数（实测 `argc === 1`），拿不到 `getAuth`，因此无法从宿主读回旧 metadata。
@@ -123,7 +124,7 @@ magpie-sensenova/
 - **语言版本**：JavaScript（ESM，`"type": "module"`，文件后缀 `.mjs`），Node.js **≥ 20**（`package.json` 的 `engines.node`）。当前开发机实测 Node v24.15.0。
 - **包管理**：npm；**无 lock 文件**（运行时零依赖，不生成 `package-lock.json`）；依赖清单文件 `package.json` 是唯一声明来源。
 - **构建/运行**：**无构建步骤**。安装方式是 `magpie plugin add <本仓库路径>`，随后 `magpie plugin login sensenova`；开发时的入口就是 `index.mjs`。插件没有语言或其他选项需要设置（文案中英同显，见 2.3 第 15 条）。
-- **测试**：`node --test test/*.test.mjs`（等价 `npm test`），当前 **61 个测试全部通过**，全程无网络（fetch 全部打桩）、不需要浏览器。
+- **测试**：`node --test test/*.test.mjs`（等价 `npm test`），当前 **68 个测试全部通过**，全程无网络（fetch 全部打桩）、不需要浏览器。
 - **禁止引入**：不引入与原功能无关的依赖；**运行时依赖必须保持为零**，需要装包时先与用户确认并说明理由；重活一律走 Node 内置能力。
 - 技术栈升级（Node 版本下限、宿主契约、主要依赖）属于用户可见变更：必须同步更新 `README.md` 对应章节，并先与用户确认。
 
@@ -183,7 +184,7 @@ magpie-sensenova/
 
 - 凭据文件路径来自 `credentialsFile` / `SENSENOVA_QUOTA_CONFIG` / `os.homedir()` 兜底，**不要往仓库内写用户数据**。
 - 写凭据文件：`utf-8`、原子写入（先写临时文件再替换）、`mode 0o600`（写后 `chmodSync` 兜底）、按前缀剥离 `__` 键。
-- 回写 `~/.sensenova-quota.json` **只在 2.3 第 6 条那一种情形下发生**；任何扩大回写范围的改动都要先与用户确认。
+- 写 `~/.sensenova-quota.json` **只写 `accounts.<槽位>` 那一格**（见 2.3 第 6 条），顶层单账号记录不动；写之前先读整份、写完串行排队，避免两个账号同时续期时互相盖掉令牌。
 
 ---
 
@@ -205,8 +206,8 @@ magpie-sensenova/
 | 凭据 | 位置 | 字段 |
 |------|------|------|
 | API Key | `~/.config/magpie/plugin-auth.json` | `key`（`type: "api"`） |
-| 账号 / 密码（可选） | 同一文件的 `metadata` | `metadata.email` / `metadata.password` |
-| 控制台 OAuth token（可选） | 同上，或 `~/.sensenova-quota.json` | `access_token` / `refresh_token` / `cookie` / `iam_base` 等 |
+| 账号名（登录必填）/ 密码（可选） | 同一文件的 `metadata` | `metadata.email` / `metadata.password`；账号名同时是该账号令牌的槽位 |
+| 控制台 OAuth token（可选） | `~/.sensenova-quota.json` 的 `accounts.<槽位>`，或该文件顶层的单账号记录（CLI 写的） | `access_token` / `refresh_token` / `expires_at` / `id_token` / `cookie` / `iam_base` 等 |
 
 - **新增配置项必须三处同步**：代码中的默认值定义 + README 的配置表 + CHANGELOG 条目。
 - 配置解析失败时要有明确行为（回退默认值或给出本地化错误文案），不要静默吞掉。
@@ -222,7 +223,7 @@ magpie-sensenova/
 - **导出**：`index.mjs` 只导出 `SenseNovaPlugin`（恰好一个函数）。
 - **`config(cfg)`**：就地写入 `cfg.provider.sensenova`（`name` / `npm` / `api` / `models`）。
 - **`provider`**：`id = "sensenova"`，`models(provider, { auth })` 有 key 时拉活列表，否则返回带回退标记的内置快照。
-- **`auth`**：`icon`（data URI）、`loader(getAuth)`（返回 `{ baseURL, apiKey, fetch }`，`fetch` 每次重读凭据、只重写 `authorization`）、`usage(getAuth)`、`methods`（**两条**）：① 账号密码，`type: "api"`，`prompts` 为 `email`（text）→ `password`（`type: "password"`，宿主遮蔽输入），`authorize` 只返回 `{ type: "success" }`，key 由宿主自己的输入框收；② 浏览器登录，`type: "oauth"`，`prompts` 只有一条 `apiKey`（`type: "password"`，oauth 方法宿主不另开 key 框），`authorize(inputs)` 返回 `{ url: consoleLoginUrl(...), instructions, method: "code", callback }`：宿主据此打开浏览器（网页版 `api("open")`，命令行只打印地址并等 `Code:`），`callback(pasted)` 用粘回来的地址换令牌、写进凭据文件，再返回 `{ type: "success", key, email, metadata: { email } }`。两条的 `authorize` 都不碰宿主 key 框（见 2.3 第 2a 条）。
+- **`auth`**：`icon`（data URI）、`loader(getAuth)`（返回 `{ baseURL, apiKey, fetch }`，`fetch` 每次重读凭据、只重写 `authorization`）、`usage(getAuth)`、`methods`（**两条**）：① 账号密码，`type: "api"`，`prompts` 为 `email`（text，**必填**：留空 `authorize` 返回 `{ type: "failed", error }`，否则宿主每登一次多一行重复账号）→ `password`（`type: "password"`，宿主遮蔽输入），`authorize` 通过后只返回 `{ type: "success" }`，key 由宿主自己的输入框收；② 浏览器登录，`type: "oauth"`，`prompts` 只有一条 `apiKey`（`type: "password"`，oauth 方法宿主不另开 key 框），`authorize(inputs)` 返回 `{ url: consoleLoginUrl(...), instructions, method: "code", callback }`：宿主据此打开浏览器（网页版 `api("open")`，命令行只打印地址并等 `Code:`），`callback(pasted)` 用粘回来的地址换令牌、写进凭据文件，再返回 `{ type: "success", key, email, metadata: { email } }`。两条的 `authorize` 都不碰宿主 key 框（见 2.3 第 2a 条）。
 - **选项**：没有语言选项，也没有 `magpie.options` 示例值；`plugins.json` 的 `options` 只承载上表的四个配置项（`baseURL` / `quotaTtlMs` / `scopeModel` / `credentialsFile`），可用 `magpie plugin options <spec> '<json>'` 读写。
 - **外部端点**：公开的 `token.sensenova.cn/v1`（模型调用与 `GET /models`，默认值在 `models.mjs`，`index.mjs` 仅重复同一字面量）、`platform.sensenova.cn` 上的控制台内部端点（额度，**完整路径只写在 `quota.mjs`**：实现与文件头注释，另见 `index.mjs` 文件头与测试夹具）、`iam.sensecoreapi.cn` / `iam.sensecoreapi.tech`（控制台 token 续期，映射表在 `quota.mjs`）。
 - 命名保持一致：新增的 prompt、配置项、文案 key 都沿用现有拼写风格，不混用两套。
@@ -403,7 +404,7 @@ refactor(i18n): 合并两处重复的池名归一逻辑
 
 提交前必须运行：
 
-- **测试**：`node --test test/*.test.mjs`（或 `npm test`），必须 **61/61 通过**；新增行为要补测试（`test/` 下按模块归档）。
+- **测试**：`node --test test/*.test.mjs`（或 `npm test`），必须 **68/68 通过**；新增行为要补测试（`test/` 下按模块归档）。
 - **冒烟**：`node -e 'import("./index.mjs").then((m) => console.log(typeof m.SenseNovaPlugin))'` 输出 `function`（验证入口可加载、图标与模块图未坏）。
 - **无构建、无 lint**：本项目没有 lint/format 命令，改动靠人工保持与相邻文件一致。
 - 测试不得依赖网络与真实凭据：一律打桩 `globalThis.fetch`（并在 `finally` 还原）或通过 `fetchImpl` 注入；临时文件用 `fs.mkdtempSync(os.tmpdir())` 并在 `finally` 清理。

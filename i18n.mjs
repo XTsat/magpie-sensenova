@@ -30,7 +30,8 @@ export const ZH = {
   unit: "积分",
   planFallback: "Token Plan",
 
-  noAccount: "没有可读额度的 SenseNova 账号：补填账号密码，或先运行 snquota login。",
+  noAccount: "这个账号还没有可读额度的控制台凭据：用「账号密码」或「浏览器登录」给它登录一次。",
+  accountRequired: "账号名不能为空：Magpie 用它区分不同账号，留空会多出一条显示 API Key 的重复行",
   readFailed: "读取额度失败: {detail}",
   refreshFailed: "refresh_token 续期失败: {detail}",
   exchangeFailed: "用授权码换令牌失败: {detail}",
@@ -55,9 +56,9 @@ export const ZH = {
 
   methodLabelAccount: "账号密码登录 / API key",
   methodLabelBrowser: "浏览器登录",
-  promptAccount: "可选：读额度用的 SenseNova 账号（留空 = 用 snquota 已存的凭据）",
+  promptAccount: "读额度用的 SenseNova 账号名（必填：Magpie 按它区分账号行，留空会多出一条重复行）",
   promptPassword: "可选：账号密码（明文存在本机 plugin-auth.json，只用于读额度）",
-  placeholderAccount: "手机号 / 邮箱",
+  placeholderAccount: "手机号 / 邮箱 / 控制台账号名",
   placeholderPassword: "留空 = 不保存密码",
   promptBrowserKey: "浏览器登录只管读额度：模型调用要的 API Key 先填在这（必填，输入时不回显）",
   placeholderApiKey: "API Key",
@@ -75,7 +76,8 @@ export const EN = {
   unit: "credits",
   planFallback: "Token Plan",
 
-  noAccount: "No SenseNova account to read the quota: fill one in, or run snquota login first.",
+  noAccount: "This account has no console credentials for the quota yet: sign it in with the account password or in a browser.",
+  accountRequired: "The account name cannot be blank: Magpie uses it to keep accounts apart, and a blank one adds a duplicate row named after the API key",
   readFailed: "Quota read failed: {detail}",
   refreshFailed: "refresh_token renewal failed: {detail}",
   exchangeFailed: "Exchanging the authorization code for a token failed: {detail}",
@@ -100,9 +102,9 @@ export const EN = {
 
   methodLabelAccount: "账号密码登录 / API key",
   methodLabelBrowser: "Sign in in a browser",
-  promptAccount: "Optional: the SenseNova account for the quota (blank = the credentials snquota already stored)",
+  promptAccount: "The SenseNova account name for the quota (required: Magpie names the account row by it, and a blank one adds a duplicate row)",
   promptPassword: "Optional: the account password (plaintext in this machine's plugin-auth.json, quota only)",
-  placeholderAccount: "phone / email",
+  placeholderAccount: "phone / email / console account name",
   placeholderPassword: "blank = do not store a password",
   promptBrowserKey: "The browser sign-in covers only the quota: type the API key the model calls need first (required, typing stays hidden)",
   placeholderApiKey: "API key",

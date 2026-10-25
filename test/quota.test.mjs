@@ -10,15 +10,17 @@ import {
   codeFromPaste,
   compact,
   consoleLoginUrl,
+  credentialSlotOf,
   ensureToken,
   fmtNum,
   isExpired,
   loginWithCode,
   parseJwt,
+  readAccountCredentials,
   readCredentials,
   toQuota,
   QuotaError,
-  writeCredentials,
+  writeAccountCredentials,
 } from "../quota.mjs";
 
 /** 造一个解码得动的 JWT：只需要中间那段载荷是真的。 */
@@ -249,26 +251,20 @@ test("remaining 缺失时跳过窗口，而不是编造一个 0 已用", () => {
   assert.equal(windows[0].amount, 100000);
 });
 
-test("writeCredentials 不把 __ 开头的内部字段写进文件", () => {
+test("写回时不把 __ 开头的内部字段写进文件", async () => {
   const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "snquota-")), "cfg.json");
-  // index.mjs 交给 writeCredentials 的就是这个形状：内部标记和真实凭据混在一起。
-  writeCredentials(
-    {
-      access_token: "at",
-      refresh_token: "rt",
-      username: "u",
-      __writable: true,
-      __file: undefined,
-      __transient: true,
-      __persist: true,
-      __save_password: true,
-      __path: "x",
-    },
+  // 内部标记是每次调用才有的，写进文件既没意义又会漏进 CLI 的配置：按前缀整体剥离。
+  fs.writeFileSync(file, JSON.stringify({ access_token: "cli", __writable: true }));
+  await writeAccountCredentials(
+    { access_token: "at", refresh_token: "rt", username: "u", __slot: "ada", __file: "/x", __writable: true },
+    "ada",
     file
   );
   const back = readCredentials(file);
-  assert.deepEqual(Object.keys(back).sort(), ["access_token", "refresh_token", "saved_at", "username"]);
-  assert.equal("__writable" in back, false, "内部标记泄漏会让 CLI 的文件多出无意义字段");
+  assert.deepEqual(Object.keys(back).sort(), ["access_token", "accounts"], "顶层那份命令行记录原样留着");
+  // 账号名由槽位本身承载，记录里只放令牌与续期材料。
+  assert.deepEqual(Object.keys(back.accounts.ada).sort(), ["access_token", "refresh_token", "saved_at"]);
+  assert.equal(JSON.stringify(back).includes("__"), false, "内部标记泄漏会让 CLI 的文件多出无意义字段");
   fs.rmSync(path.dirname(file), { recursive: true, force: true });
 });
 
@@ -362,3 +358,72 @@ test("loginWithCode 认不出 code 时不发请求", async () => {
   assert.equal(called, false);
 });
 
+
+test("credentialSlotOf 用账号名当槽位，没有名字时退回 API Key 的指纹", () => {
+  assert.equal(credentialSlotOf({ name: "ada" }), "ada");
+  assert.equal(credentialSlotOf({ name: "  ada  ", key: "sk-1" }), "ada");
+  const byKey = credentialSlotOf({ name: "", key: "sk-1" });
+  // 槽位必须唯一：同名会被当成同一个账号，空槽位会让两行读到同一份令牌。
+  assert.match(byKey, /^key:[0-9a-f]{12}$/);
+  assert.equal(byKey, credentialSlotOf({ key: "sk-1" }), "同一把 key 要落到同一槽位");
+  assert.notEqual(byKey, credentialSlotOf({ key: "sk-2" }));
+  assert.equal(credentialSlotOf({ name: "", key: "" }), undefined);
+});
+
+test("readAccountCredentials 只给自己的槽位，别的账号一律不借用", () => {
+  const file = {
+    accounts: {
+      ada: { access_token: "at-ada" },
+      bob: { access_token: "at-bob" },
+    },
+  };
+  assert.equal(readAccountCredentials(file, "ada").access_token, "at-ada");
+  assert.equal(readAccountCredentials(file, "bob").access_token, "at-bob");
+  // 回归：曾经每行都拿到同一个令牌，界面上就是四个账号一模一样的额度。
+  assert.deepEqual(readAccountCredentials(file, "carol"), {});
+  assert.deepEqual(readAccountCredentials(file, undefined), {});
+  assert.deepEqual(readAccountCredentials(null, "ada"), {});
+});
+
+test("readAccountCredentials 认顶层那份单账号记录，但只在令牌确实属于这个账号时", () => {
+  const own = { access_token: jwt({ ext: { username: "ada" } }), cookie: "c1" };
+  assert.equal(readAccountCredentials(own, "ada").cookie, "c1", "令牌解出的账号名对得上就用顶层记录");
+  assert.deepEqual(readAccountCredentials(own, "bob"), {}, "对不上就是别人的账号，不能借");
+  // 解不出账号名的老文件只能当成这台机器唯一那份。
+  const anonymous = { access_token: "at", refresh_token: "rt" };
+  assert.equal(readAccountCredentials(anonymous, "bob").access_token, "at");
+  assert.deepEqual(readAccountCredentials({ cookie: "c" }, "bob"), {}, "没有令牌就没有可借的东西");
+  // 顶层记录里的 accounts 与内部记账键不算凭据字段。
+  assert.deepEqual(Object.keys(readAccountCredentials({ access_token: "at", accounts: {}, __writable: true }, "x")), [
+    "access_token",
+  ]);
+});
+
+test("writeAccountCredentials 写进自己的槽位，别的槽位与顶层记录都不动", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "snquota-"));
+  const file = path.join(dir, "cfg.json");
+  fs.writeFileSync(
+    file,
+    JSON.stringify({
+      base: "https://platform.sensenova.cn",
+      access_token: "cli-token",
+      accounts: { bob: { access_token: "at-bob" } },
+    })
+  );
+  assert.equal(
+    await writeAccountCredentials(
+      { access_token: "at-ada", refresh_token: "rt-ada", username: "ada", __slot: "ada" },
+      "ada",
+      file
+    ),
+    true
+  );
+  const back = readCredentials(file);
+  assert.equal(back.accounts.ada.access_token, "at-ada");
+  assert.equal(back.accounts.ada.refresh_token, "rt-ada");
+  assert.equal(back.accounts.bob.access_token, "at-bob", "别人的槽位不能被覆盖");
+  assert.equal(back.access_token, "cli-token", "命令行那份顶层记录不归插件管");
+  assert.equal("__slot" in back.accounts.ada, false, "内部记账键不落盘");
+  assert.equal(await writeAccountCredentials({ access_token: "x" }, undefined, file), false, "没有槽位就不写");
+  fs.rmSync(dir, { recursive: true, force: true });
+});

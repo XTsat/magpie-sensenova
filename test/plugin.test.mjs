@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { SenseNovaPlugin } from "../index.mjs";
+import { credentialSlotOf } from "../quota.mjs";
 
 /**
  * Run one request through the plugin's `fetch` hook and report what the host's
@@ -107,9 +108,17 @@ const jwt = (payload) => `x.${Buffer.from(JSON.stringify(payload)).toString("bas
 async function usageWith(options, auth) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sensenova-"));
   const file = path.join(dir, "quota.json");
+  // 令牌按账号分开存：槽位就是这行登录时填的账号名（没有名字时是 key 的指纹），
+  // 与插件的取法一致，否则这一行会被当成「没有控制台凭据」。
+  const meta = auth.metadata ?? {};
+  const slot = credentialSlotOf({ name: meta.email ?? meta.username, key: "sk-test" });
   fs.writeFileSync(
     file,
-    JSON.stringify({ base: "https://platform.sensenova.cn", access_token: auth.token, expires_at: 4102444800 })
+    JSON.stringify({
+      accounts: {
+        [slot]: { base: "https://platform.sensenova.cn", access_token: auth.token, expires_at: 4102444800 },
+      },
+    })
   );
 
   const plugin = await SenseNovaPlugin({}, { ...options, credentialsFile: file });
@@ -194,8 +203,8 @@ test("两条提示的文案都是中英同显", async () => {
     assert.match(p.message, / \/ /, `${p.key} 的文案应同时带中英两半`);
   }
   // 同一句里中文在前、英文在后：宿主没有语言通道，两种读者都要能看懂。
-  assert.match(plugin.auth.methods[0].prompts[0].message, /可选/);
-  assert.match(plugin.auth.methods[0].prompts[0].message, /Optional/);
+  assert.match(plugin.auth.methods[0].prompts[0].message, /必填/);
+  assert.match(plugin.auth.methods[0].prompts[0].message, /required/);
 });
 
 test("authorize 只回 success：凭据是宿主收下的那把 key", async () => {
@@ -305,11 +314,87 @@ test("浏览器登录成功：控制台令牌落盘，API Key 作为凭据返回
     // 账号行按控制台账号命名：metadata.email 既是行名来源，也是下次读额度的入口。
     assert.equal(out.email, "ada");
     assert.deepEqual(out.metadata, { email: "ada" });
+    // 令牌落在刚登录的那个账号自己的槽位里（这里就是控制台账号名），
+    // 顶层那份命令行写的记录不动。
     const saved = JSON.parse(fs.readFileSync(file, "utf8"));
-    assert.equal(saved.access_token, access);
-    assert.equal(saved.refresh_token, "rt-1");
+    assert.equal(saved.accounts.ada.access_token, access);
+    assert.equal(saved.accounts.ada.refresh_token, "rt-1");
+    assert.equal(saved.access_token, undefined);
   } finally {
     globalThis.fetch = real;
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("两个账号各读自己的令牌：不会几行显示同一份额度", async () => {
+  // 回归：凭据文件里只有一份令牌时，插件曾把它发给每一个账号行，于是只登录两个
+  // 账号却看到四行一模一样的额度。令牌按登录时填的账号名分槽存放，各取各的。
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sensenova-"));
+  const file = path.join(dir, "quota.json");
+  const ada = jwt({ ext: { username: "ada" } });
+  const bob = jwt({ ext: { username: "bob" } });
+  fs.writeFileSync(
+    file,
+    JSON.stringify({
+      accounts: {
+        ada: { access_token: ada, expires_at: 4102444800 },
+        bob: { access_token: bob, expires_at: 4102444800 },
+      },
+    })
+  );
+  const plugin = await SenseNovaPlugin({}, { credentialsFile: file });
+  const real = globalThis.fetch;
+  const seen = [];
+  globalThis.fetch = async (input, init) => {
+    const headers = input instanceof Request ? input.headers : new Headers(init?.headers);
+    seen.push(String(headers.get("Authorization")));
+    return new Response(JSON.stringify(POOL_USAGE), { status: 200 });
+  };
+  try {
+    const asAda = await plugin.auth.usage(async () => ({ type: "api", key: "sk-a", metadata: { email: "ada" } }));
+    const asBob = await plugin.auth.usage(async () => ({ type: "api", key: "sk-b", metadata: { email: "bob" } }));
+    assert.equal(asAda.user, "ada");
+    assert.equal(asBob.user, "bob");
+    assert.equal(seen.length, 2);
+    assert.equal(seen[0].includes(ada), true, "ada 那行应该拿 ada 的令牌");
+    assert.equal(seen[1].includes(bob), true, "bob 那行应该拿 bob 的令牌");
+  } finally {
+    globalThis.fetch = real;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("没有控制台凭据的账号不回退用别人的令牌，只报「还没有凭据」", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sensenova-"));
+  const file = path.join(dir, "quota.json");
+  fs.writeFileSync(
+    file,
+    JSON.stringify({ accounts: { ada: { access_token: jwt({ ext: { username: "ada" } }), expires_at: 4102444800 } } })
+  );
+  const plugin = await SenseNovaPlugin({}, { credentialsFile: file });
+  const real = globalThis.fetch;
+  let called = false;
+  globalThis.fetch = async () => {
+    called = true;
+    return new Response(JSON.stringify(POOL_USAGE), { status: 200 });
+  };
+  try {
+    const usage = await plugin.auth.usage(async () => ({ type: "api", key: "sk-b", metadata: { email: "bob" } }));
+    assert.equal(called, false, "别的账号的令牌不能拿来用");
+    assert.match(usage.error, /控制台凭据/);
+  } finally {
+    globalThis.fetch = real;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("账号密码登录不填账号名直接失败：留空会多出一条重复的账号行", async () => {
+  // 实测：宿主按 metadata.email 合并账号行，空名字的登录不合并，每登一次多一行
+  // 「API key …尾4位」——那几行随后又共用同一份令牌，界面上就是重复的额度。
+  const plugin = await SenseNovaPlugin({}, {});
+  const out = await plugin.auth.methods[0].authorize({ email: "   ", password: "pw" });
+  assert.equal(out.type, "failed");
+  assert.match(out.error, /账号名不能为空/);
+  const ok = await plugin.auth.methods[0].authorize({ email: "ada", password: "pw" });
+  assert.equal(ok.type, "success");
 });

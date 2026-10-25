@@ -31,11 +31,13 @@ import { FALLBACK_MODELS, NPM, createCatalog, toConfigModel, toProviderModel } f
 import {
   accountNameOf,
   consoleLoginUrl,
+  credentialSlotOf,
   loginWithCode,
   QuotaError,
+  readAccountCredentials,
   readCredentials,
   readQuota,
-  writeCredentials,
+  writeAccountCredentials,
 } from "./quota.mjs";
 import { fill, T } from "./i18n.mjs";
 
@@ -72,41 +74,37 @@ export async function SenseNovaPlugin({ client } = {}, options = {}) {
     Object.fromEntries(models.map((m) => [m.id, toConfigModel(m)]));
 
   /**
-   * The credential pair for one account.
+   * The console credentials one account row may use.
    *
-   * The console credentials come from the sign-in prompts when the user
-   * supplied them, and otherwise from the file the `snquota` CLI writes. The
-   * fallback matters because the console login is a multi-step OAuth flow that
-   * the CLI already drives, including keeping the token fresh; asking for the
-   * same account twice would be worse than reusing that file.
+   * A row only ever sees **its own** record. The pools are account-level, so one
+   * console token answers for exactly one account: handing the same token to
+   * every row is what made several rows show one and the same quota. The slot is
+   * the account name typed at sign-in, or a fingerprint of the API key when the
+   * row has no name; the token itself lives in the file the quota reader reads,
+   * so a sign-in from the CLI is still picked up — but only by the account it
+   * belongs to.
    */
-  const credentialsFor = (auth) => {
+  const slotOf = (auth) => credentialSlotOf({ name: consoleAuthOf(auth).username, key: apiKeyOf(auth) });
+
+  const credentialsFor = (auth, slot) => {
     const fromAuth = consoleAuthOf(auth);
-    const fromFile = readCredentials(opts.credentialsFile) ?? {};
+    const stored = readAccountCredentials(readCredentials(opts.credentialsFile), slot);
     return {
-      base: fromFile.base,
-      client_id: fromFile.client_id,
-      redirect_uri: fromFile.redirect_uri,
-      access_token: fromFile.access_token,
-      refresh_token: fromFile.refresh_token,
-      expires_at: fromFile.expires_at,
-      cookie: fromAuth.cookie ?? fromFile.cookie,
-      username: fromAuth.username ?? fromFile.username,
-      password: fromAuth.password ?? fromFile.password,
-      iam_base: fromAuth.iamBase ?? fromFile.iam_base,
-      // Only the file is written back: a token minted here would otherwise
-      // silently replace the CLI's copy on the next read.
-      __writable: !fromAuth.username && !fromAuth.cookie,
+      ...stored,
+      cookie: fromAuth.cookie ?? stored.cookie,
+      username: fromAuth.username ?? stored.username,
+      password: fromAuth.password ?? stored.password,
+      iam_base: fromAuth.iamBase ?? stored.iam_base,
+      __slot: slot,
       __file: opts.credentialsFile,
     };
   };
 
   /**
-   * A fresh console credential record, seeded from the file.
+   * A fresh console credential record for a browser sign-in.
    *
-   * Signing in replaces only the token fields, so whatever else the `snquota`
-   * CLI or an earlier sign-in left in there (the IAM host, a session cookie) is
-   * carried forward instead of being dropped on the next read.
+   * Only the endpoint settings come from the file: carrying the tokens over
+   * would let a sign-in start from whichever account signed in last.
    */
   const consoleCfg = () => {
     const file = readCredentials(opts.credentialsFile) ?? {};
@@ -114,12 +112,6 @@ export async function SenseNovaPlugin({ client } = {}, options = {}) {
       base: file.base,
       client_id: file.client_id,
       redirect_uri: file.redirect_uri,
-      access_token: file.access_token,
-      refresh_token: file.refresh_token,
-      expires_at: file.expires_at,
-      cookie: file.cookie,
-      username: file.username,
-      password: file.password,
       iam_base: file.iam_base,
     };
   };
@@ -130,10 +122,11 @@ export async function SenseNovaPlugin({ client } = {}, options = {}) {
    * The tokens have nowhere else to live: Magpie stores one credential per
    * account and that slot holds the API key, which is what signs the model
    * calls. So the console side goes to the file the quota reader already reads,
-   * and the next `usage` call picks it up without a restart.
+   * under the signing-in account's own slot, and the next `usage` call picks it
+   * up without a restart.
    */
-  const saveConsole = (cfg) => {
-    writeCredentials(cfg, opts.credentialsFile);
+  const saveConsole = async (cfg, slot) => {
+    await writeAccountCredentials(cfg, slot, opts.credentialsFile);
     quotaCache.clear();
   };
 
@@ -155,11 +148,14 @@ export async function SenseNovaPlugin({ client } = {}, options = {}) {
 
   const quotaFor = async (getAuth) => {
     const auth = await readAuth(getAuth);
-    const cacheKey = apiKeyOf(auth) ?? consoleAuthOf(auth).username ?? "sensenova";
+    const slot = slotOf(auth);
+    // 缓存也按这一行的凭据分开：同一个 API Key 登过两个账号时，否则第二行会读到
+    // 第一行缓存的额度，界面上又是一模一样的数字。
+    const cacheKey = `${apiKeyOf(auth) ?? ""}\u0000${slot ?? ""}`;
     const hit = quotaCache.get(cacheKey);
     if (hit && Date.now() - hit.at < opts.quotaTtlMs) return hit.value;
 
-    const cfg = credentialsFor(auth);
+    const cfg = credentialsFor(auth, slot);
     if (!cfg.access_token && !cfg.refresh_token && !cfg.cookie && !cfg.password) {
       const value = { error: T.noAccount };
       quotaCache.set(cacheKey, { at: Date.now(), value });
@@ -168,7 +164,8 @@ export async function SenseNovaPlugin({ client } = {}, options = {}) {
 
     try {
       const { quota, changed } = await readQuota(cfg, { scopeModel: opts.scopeModel });
-      if (changed && cfg.__writable) writeCredentials(cfg, cfg.__file);
+      // 续期出来的令牌写回这个账号自己的槽位，别人的记录与命令行那份都不动。
+      if (changed) await writeAccountCredentials(cfg, cfg.__slot, cfg.__file);
       // 套餐名用接口给的（实际是 "Free Plan"），拿不到才退回通用叫法。
       const { plan, ...rest } = quota;
       const user = accountLabel(cfg);
@@ -323,9 +320,15 @@ export async function SenseNovaPlugin({ client } = {}, options = {}) {
           /**
            * Nothing to return but success: the credential is the key the host
            * collected, and `inputs` does not carry it (measured — returning a
-           * key here overrides what the user typed into that field).
+           * key here overrides what the user typed into that field). What the
+           * inputs do carry is the prompt answers, and the account name must be
+           * one of them: Magpie names an account by it and merges on it, so a
+           * blank answer starts a fresh nameless row on every sign-in — which is
+           * how one console account ended up as three rows with identical quota.
            */
-          async authorize() {
+          async authorize(inputs) {
+            const name = typeof inputs?.email === "string" ? inputs.email.trim() : "";
+            if (!name) return { type: "failed", error: T.accountRequired };
             return { type: "success" };
           },
         },
@@ -364,7 +367,12 @@ export async function SenseNovaPlugin({ client } = {}, options = {}) {
                 } catch (e) {
                   return { type: "failed", error: e?.message ?? String(e) };
                 }
-                saveConsole(cfg);
+                // The name comes from the token that was just minted, so the
+                // slot the tokens are stored under is the same one this row
+                // will look them up by; without a name the API key's
+                // fingerprint has to serve as the slot.
+                const name = accountNameOf(cfg);
+                await saveConsole(cfg, credentialSlotOf({ name, key }));
                 // `metadata` is what names the row and what `consoleAuthOf`
                 // reads back, and the host merges on `metadata.email`: returning
                 // the console account's own name updates the row that account
@@ -373,7 +381,6 @@ export async function SenseNovaPlugin({ client } = {}, options = {}) {
                 // merge replaces `metadata` wholesale, so a password stored by
                 // the other method is gone afterwards; the tokens written above
                 // are what the quota reads from then on.
-                const name = accountNameOf(cfg);
                 return name
                   ? { type: "success", key, email: name, metadata: { email: name } }
                   : { type: "success", key };
