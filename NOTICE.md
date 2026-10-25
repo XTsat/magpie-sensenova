@@ -27,9 +27,10 @@ Two of the three are **not** public APIs:
   because the platform publishes no API-key-accessible quota endpoint at all
   (every candidate path answers 404). Its path is deliberately not written
   down in this file; it is in `quota.mjs`.
-- `https://iam.sensecoreapi.cn/iam/authn/…` — the platform's IAM login service,
-  used the same way the console's login page uses it, to renew the console
-  token that the quota endpoint requires.
+- `https://iam.sensecoreapi.cn/iam/authn/…` (or `https://iam.sensecoreapi.tech`
+  for the console host that uses it) — the platform's IAM login service, used
+  the same way the console's login page uses it, to renew the console token
+  that the quota endpoint requires.
 
 Using the console's internal endpoints may or may not be within the platform's
 terms of service. That is the user's call, not this plugin's.
