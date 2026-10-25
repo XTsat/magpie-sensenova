@@ -13,7 +13,6 @@
     "quota.mjs",
     "models.mjs",
     "i18n.mjs",
-    "panel/",
     "assets/",
     "README.md",
     "NOTICE.md",
@@ -48,16 +47,6 @@
     "test": "node --test test/*.test.mjs"
   },
   "magpie": {
-    "icon": "https://platform.sensenova.cn/favicon.ico",
-    "panels": [
-      {
-        "slot": "settings",
-        "file": "panel/settings.html",
-        "title": "SenseNova language",
-        "titles": {
-          "zh": "SenseNova 语言"
-        }
-      }
-    ]
+    "icon": "https://platform.sensenova.cn/favicon.ico"
   }
 }

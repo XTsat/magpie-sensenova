@@ -123,29 +123,24 @@ async function usageWith(options, auth) {
   }
 }
 
-test("locale: en 让窗口标签、单位和余额都变英文", async () => {
-  const usage = await usageWith({ locale: "en" }, { token: "opaque" });
+test("窗口名、单位和余额都是中英同显，不再有语言切换", async () => {
+  const usage = await usageWith({}, { token: "opaque" });
   assert.equal(usage.plan, "Free Plan");
-  assert.equal(usage.balance, "1,292,155,358 credits");
+  assert.equal(usage.balance, "1,292,155,358 积分 / credits");
   assert.deepEqual(
     usage.windows.map((w) => w.name),
-    ["General Pool · 5h window", "General Pool · This week", "Flash-Lite Dedicated Pool · 5h window"]
+    [
+      "通用积分池 · 5 小时窗口 / General Pool · 5h window",
+      "通用积分池 · 本周 / General Pool · This week",
+      "Flash-Lite积分池 · 5 小时窗口 / Flash-Lite Dedicated Pool · 5h window",
+    ]
   );
-  assert.equal(usage.windows[0].unit, "credits");
-});
-
-test("locale: zh 保持原样", async () => {
-  const usage = await usageWith({ locale: "zh" }, { token: "opaque" });
-  assert.equal(usage.balance, "1,292,155,358 积分");
-  assert.deepEqual(
-    usage.windows.map((w) => w.name),
-    ["通用积分池 · 5 小时窗口", "通用积分池 · 本周", "Flash-Lite积分池 · 5 小时窗口"]
-  );
+  assert.equal(usage.windows[0].unit, "积分 / credits");
 });
 
 test("账号行优先用 token 里的账号名，而不是登录时填的账号", async () => {
   // 只填 API Key 时用户拿不到名字；token 里带着它，所以账号行不必显示 API Key。
-  const usage = await usageWith({ locale: "en" }, {
+  const usage = await usageWith({}, {
     token: jwt({ ext: { username: "Ada" } }),
     metadata: { username: "13800000000" },
   });
@@ -153,7 +148,7 @@ test("账号行优先用 token 里的账号名，而不是登录时填的账号"
 });
 
 test("token 里没有名字时退回登录时填的账号", async () => {
-  const usage = await usageWith({ locale: "en" }, {
+  const usage = await usageWith({}, {
     token: "opaque",
     metadata: { username: "13800000000" },
   });
@@ -161,7 +156,7 @@ test("token 里没有名字时退回登录时填的账号", async () => {
 });
 
 test("两者都没有时不设 user，交给 Magpie 退回显示 API Key", async () => {
-  const usage = await usageWith({ locale: "en" }, { token: "opaque" });
+  const usage = await usageWith({}, { token: "opaque" });
   assert.equal("user" in usage, false);
 });
 
@@ -177,12 +172,15 @@ test("账号提问的 key 必须是 email，否则账号行只显示 API Key", a
   );
 });
 
-test("三条提示都带本地化后的文案", async () => {
-  const en = await SenseNovaPlugin({}, { locale: "en" });
-  for (const p of en.auth.methods[0].prompts) {
+test("三条提示的文案都是中英同显", async () => {
+  const plugin = await SenseNovaPlugin({}, {});
+  for (const p of plugin.auth.methods[0].prompts) {
     assert.ok(typeof p.message === "string" && p.message.length > 0, `${p.key} 缺 message`);
+    assert.match(p.message, / \/ /, `${p.key} 的文案应同时带中英两半`);
   }
-  assert.match(en.auth.methods[0].prompts[1].message, /Optional/, "英文表应生效");
+  // 同一句里中文在前、英文在后：宿主没有语言通道，两种读者都要能看懂。
+  assert.match(plugin.auth.methods[0].prompts[1].message, /可选/);
+  assert.match(plugin.auth.methods[0].prompts[1].message, /Optional/);
 });
 
 test("authorize 只回 {type, key}，命名交给提示字段", async () => {
@@ -209,4 +207,17 @@ test("consoleAuthOf 认 email，也兼容旧的 username / account", async () =>
   );
   assert.equal(consoleAuthOf({ metadata: { email: "   " } }).username, undefined);
   assert.equal(consoleAuthOf(undefined).username, undefined);
+});
+
+test("包清单不再声明自带页面：Magpie 的设置卡片已移除", async () => {
+  const pkg = JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+  assert.equal(pkg.magpie.panels, undefined, "不再向宿主注册面板");
+  assert.equal(pkg.files.includes("panel/"), false, "发布白名单不该再带 panel/");
+});
+
+test("包清单只声明图标，不再用示例值暗示插件选项", async () => {
+  // 宿主的「选项」编辑器只对中间件/网关插件开放，示例值虽有也不会被渲染出来；
+  // 而配置项本身写在 README 的 Configuration 表里，不需要第二处声明。
+  const pkg = JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+  assert.deepEqual(Object.keys(pkg.magpie), ["icon"]);
 });

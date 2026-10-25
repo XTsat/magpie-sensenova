@@ -5,7 +5,6 @@ import os from "node:os";
 import path from "node:path";
 
 import { extractModels, normalizeModel, toConfigModel, toProviderModel } from "../models.mjs";
-import { strings } from "../i18n.mjs";
 import {
   accountNameOf,
   compact,
@@ -48,7 +47,12 @@ test("toQuota 把两个池映射成四个窗口", () => {
   assert.equal(windows.length, 4);
   assert.deepEqual(
     windows.map((w) => w.name),
-    ["通用积分池 · 5 小时窗口", "通用积分池 · 本周", "Flash-Lite 专属积分池 · 5 小时窗口", "Flash-Lite 专属积分池 · 本周"]
+    [
+      "通用积分池 · 5 小时窗口 / General Pool · 5h window",
+      "通用积分池 · 本周 / General Pool · This week",
+      "Flash-Lite 专属积分池 · 5 小时窗口 / Flash-Lite Dedicated Pool · 5h window",
+      "Flash-Lite 专属积分池 · 本周 / Flash-Lite Dedicated Pool · This week",
+    ]
   );
 });
 
@@ -67,7 +71,7 @@ test("toQuota 的 limit / span / resetsAt 取自窗口", () => {
   assert.equal(windows[0].span, 18000);
   assert.equal(windows[0].resetsAt, 1791983400);
   assert.equal(windows[1].span, 604800);
-  assert.equal(windows[1].unit, "积分");
+  assert.equal(windows[1].unit, "积分 / credits");
 });
 
 test("专属池的窗口限定到 Flash-Lite 模型", () => {
@@ -104,7 +108,7 @@ test("plan 取自接口，而不是写死", () => {
 
 test("活动固定积分余额作为 balance 上报，且只取通用池", () => {
   const { balance } = toQuota(POOLS);
-  assert.equal(balance, "1,292,155,358 积分");
+  assert.equal(balance, "1,292,155,358 积分 / credits");
 });
 
 test("amount 是已用数量，limit - amount 还原出控制台的「本周余额」", () => {
@@ -238,7 +242,7 @@ test("remaining 缺失时跳过窗口，而不是编造一个 0 已用", () => {
     },
   ]);
   assert.equal(windows.length, 1, "只有能算出用量的窗口才上报");
-  assert.equal(windows[0].name, "通用积分池 · 本周");
+  assert.equal(windows[0].name, "通用积分池 · 本周 / General Pool · This week");
   assert.equal(windows[0].amount, 100000);
 });
 
@@ -265,20 +269,15 @@ test("writeCredentials 不把 __ 开头的内部字段写进文件", () => {
   fs.rmSync(path.dirname(file), { recursive: true, force: true });
 });
 
-test("英文表下窗口标签与单位跟着变，数字不变", () => {
-  const en = strings("en");
-  const { windows, balance } = toQuota(POOLS, { strings: en });
-  assert.deepEqual(
-    windows.map((w) => w.name),
-    ["General Pool · 5h window", "General Pool · This week", "Flash-Lite Dedicated Pool · 5h window", "Flash-Lite Dedicated Pool · This week"]
-  );
-  assert.equal(windows[0].unit, "credits");
-  assert.equal(balance, "1,292,155,358 credits");
-  // 语言只该改文案，不该动数字
-  const zh = toQuota(POOLS);
-  assert.deepEqual(windows.map((w) => w.amount), zh.windows.map((w) => w.amount));
-  assert.deepEqual(windows.map((w) => w.limit), zh.windows.map((w) => w.limit));
-  assert.deepEqual(windows.map((w) => w.used), zh.windows.map((w) => w.used));
+test("窗口名里的中英两半各自成句，不出现交叉拼接", () => {
+  const { windows } = toQuota(POOLS);
+  for (const w of windows) {
+    const [zh, en] = w.name.split(" / ");
+    assert.ok(zh.includes("积分池"), `${w.name} 的中文半截丢了池名`);
+    assert.ok(en.includes("Pool"), `${w.name} 的英文半截丢了池名`);
+  }
+  // 回归：曾经把「通用积分池」与英文窗口名拼成「通用积分池 · 5h window」这种半中半英。
+  assert.equal(windows[0].name.includes("5h window"), true, "英文半截应带英文窗口名");
 });
 
 test("accountNameOf 从 access_token.ext.username 取账号名", () => {

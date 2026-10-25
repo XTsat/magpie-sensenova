@@ -28,7 +28,7 @@ import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
 
-import { fill, poolLabel, strings as tableFor } from "./i18n.mjs";
+import { fill, pair, poolParts, EN, T, ZH } from "./i18n.mjs";
 
 const DEFAULT_BASE = "https://platform.sensenova.cn";
 const DEFAULT_CLIENT_ID = "nova";
@@ -253,7 +253,7 @@ export class QuotaError extends Error {
   }
 }
 
-async function refreshWithRefreshToken(cfg, fetchImpl, t) {
+async function refreshWithRefreshToken(cfg, fetchImpl) {
   const { res, data, text } = await postToken(
     cfg,
     {
@@ -265,7 +265,7 @@ async function refreshWithRefreshToken(cfg, fetchImpl, t) {
   );
   if (!res.ok || !data?.access_token) {
     const detail = data?.error_description || data?.error || text.slice(0, 200);
-    throw new QuotaError(fill(t.refreshFailed, { detail }));
+    throw new QuotaError(fill(T.refreshFailed, { detail }));
   }
   applyToken(cfg, data);
 }
@@ -287,7 +287,7 @@ function buildAuthorize(cfg) {
   return { url, verifier, redirectUri };
 }
 
-async function exchangeCode(cfg, { code, verifier, redirectUri }, fetchImpl, t) {
+async function exchangeCode(cfg, { code, verifier, redirectUri }, fetchImpl) {
   const { res, data, text } = await postToken(
     cfg,
     {
@@ -301,7 +301,7 @@ async function exchangeCode(cfg, { code, verifier, redirectUri }, fetchImpl, t) 
   );
   if (!res.ok || !data?.access_token) {
     const detail = data?.error_description || data?.error || text.slice(0, 200);
-    throw new QuotaError(fill(t.exchangeFailed, { detail }));
+    throw new QuotaError(fill(T.exchangeFailed, { detail }));
   }
   applyToken(cfg, data);
 }
@@ -324,22 +324,22 @@ const codeOf = (location) => {
   }
 };
 
-async function renewWithCookie(cfg, fetchImpl, t) {
+async function renewWithCookie(cfg, fetchImpl) {
   const { url, verifier, redirectUri } = buildAuthorize(cfg);
   const jar = new CookieJar(cfg.cookie);
   const res = await hop(url, jar, fetchImpl, { headers: { Accept: "text/html" } });
   const location = res.headers.get("location") || "";
   if (/login_challenge=/.test(location)) {
-    throw new QuotaError(t.cookieDead);
+    throw new QuotaError(T.cookieDead);
   }
   const code = codeOf(location);
   if (!code) {
-    throw new QuotaError(fill(t.noAuthCode, { status: res.status }));
+    throw new QuotaError(fill(T.noAuthCode, { status: res.status }));
   }
-  await exchangeCode(cfg, { code, verifier, redirectUri }, fetchImpl, t);
+  await exchangeCode(cfg, { code, verifier, redirectUri }, fetchImpl);
 }
 
-async function renewWithPassword(cfg, fetchImpl, t) {
+async function renewWithPassword(cfg, fetchImpl) {
   const { url, verifier, redirectUri } = buildAuthorize(cfg);
   const jar = new CookieJar(cfg.cookie);
   const iam =
@@ -350,10 +350,10 @@ async function renewWithPassword(cfg, fetchImpl, t) {
   const res = await hop(url, jar, fetchImpl, { headers: { Accept: "text/html" } });
   const location = res.headers.get("location") || "";
   let code = codeOf(location);
-  if (code) return exchangeCode(cfg, { code, verifier, redirectUri }, fetchImpl, t);
+  if (code) return exchangeCode(cfg, { code, verifier, redirectUri }, fetchImpl);
 
   const challenge = /login_challenge=([^&\s]+)/.exec(location)?.[1];
-  if (!challenge) throw new QuotaError(fill(t.noChallenge, { status: res.status }));
+  if (!challenge) throw new QuotaError(fill(T.noChallenge, { status: res.status }));
 
   const checkRes = await hop(
     `${iam}/v1/auth/checkChallenge?challenge=${encodeURIComponent(challenge)}`,
@@ -362,7 +362,7 @@ async function renewWithPassword(cfg, fetchImpl, t) {
     { headers: { Accept: "application/json" } }
   );
   const check = await checkRes.json().catch(() => null);
-  if (!check?.is_valid) throw new QuotaError(t.challengeExpired);
+  if (!check?.is_valid) throw new QuotaError(T.challengeExpired);
 
   const loginRes = await hop(`${iam}/v1/auth/nova/login`, jar, fetchImpl, {
     method: "POST",
@@ -383,46 +383,45 @@ async function renewWithPassword(cfg, fetchImpl, t) {
   if (!loginRes.ok) {
     const reason = loginData?.details?.find?.((d) => typeof d?.reason === "string")?.reason;
     const map = {
-      invalidAccountOrPassword: t.loginInvalidAccount,
-      IncorrectPassword: t.loginBadPassword,
-      NotFound: t.loginNoAccount,
-      LoginLocked: t.loginLocked,
-      PermissionDenied: t.loginNoPermission,
-      OperationTooFrequently: t.loginTooFrequent,
+      invalidAccountOrPassword: T.loginInvalidAccount,
+      IncorrectPassword: T.loginBadPassword,
+      NotFound: T.loginNoAccount,
+      LoginLocked: T.loginLocked,
+      PermissionDenied: T.loginNoPermission,
+      OperationTooFrequently: T.loginTooFrequent,
     };
-    throw new QuotaError(map[reason] || fill(t.loginRejected, { status: loginRes.status }));
+    throw new QuotaError(map[reason] || fill(T.loginRejected, { status: loginRes.status }));
   }
   const next = typeof loginData?.redirect === "string" ? loginData.redirect.trim() : "";
-  if (!next) throw new QuotaError(t.noRedirect);
+  if (!next) throw new QuotaError(T.noRedirect);
 
   // 跟着跳转链走，直到某一跳的 Location 里出现授权码
   let url2 = next;
   for (let i = 0; i < 10; i++) {
     const r = await hop(url2, jar, fetchImpl, { headers: { Accept: "text/html,application/json" } });
     const loc = r.headers.get("location");
-    if (!loc) throw new QuotaError(fill(t.chainStuck, { where: String(url2).slice(0, 100) }));
+    if (!loc) throw new QuotaError(fill(T.chainStuck, { where: String(url2).slice(0, 100) }));
     const abs = new URL(loc, url2).href;
     const found = codeOf(abs);
-    if (found) return exchangeCode(cfg, { code: found, verifier, redirectUri }, fetchImpl, t);
-    if (/login_challenge=/.test(abs)) throw new QuotaError(t.bouncedToLogin);
+    if (found) return exchangeCode(cfg, { code: found, verifier, redirectUri }, fetchImpl);
+    if (/login_challenge=/.test(abs)) throw new QuotaError(T.bouncedToLogin);
     url2 = abs;
   }
-  throw new QuotaError(t.chainTooLong);
+  throw new QuotaError(T.chainTooLong);
 }
 
 /**
  * 保证 cfg.access_token 可用，必要时续期。
  *
  * @param {object} cfg - 凭据，会被就地更新。
- * @param {{fetchImpl?: Function, now?: number, strings?: object}} [opts] - strings 决定错误信息的语言。
+ * @param {{fetchImpl?: Function, now?: number}} [opts]
  * @returns {Promise<boolean>} 是否更新过凭据（需要写回文件）。
  */
-export async function ensureToken(cfg, { fetchImpl = fetch, now = Date.now(), strings } = {}) {
-  const t = strings ?? tableFor("zh");
+export async function ensureToken(cfg, { fetchImpl = fetch, now = Date.now() } = {}) {
   if (cfg.access_token && !isExpired(cfg, now)) return false;
   if (cfg.refresh_token) {
     try {
-      await refreshWithRefreshToken(cfg, fetchImpl, t);
+      await refreshWithRefreshToken(cfg, fetchImpl);
       return true;
     } catch (e) {
       if (!cfg.cookie && !cfg.password) throw e;
@@ -430,17 +429,17 @@ export async function ensureToken(cfg, { fetchImpl = fetch, now = Date.now(), st
   }
   if (cfg.cookie) {
     try {
-      await renewWithCookie(cfg, fetchImpl, t);
+      await renewWithCookie(cfg, fetchImpl);
       return true;
     } catch (e) {
       if (!cfg.password) throw e;
     }
   }
   if (cfg.username && cfg.password) {
-    await renewWithPassword(cfg, fetchImpl, t);
+    await renewWithPassword(cfg, fetchImpl);
     return true;
   }
-  throw new QuotaError(t.noRenewalPath);
+  throw new QuotaError(T.noRenewalPath);
 }
 
 /* ------------------------------------------------------------------ 取数 */
@@ -455,16 +454,16 @@ export async function ensureToken(cfg, { fetchImpl = fetch, now = Date.now(), st
  * （控制台横幅原话：「同账户所有 Key 共享」）。按 Key 的拆分只存在于「使用明细」
  * 里，那是逐条调用记录，不是额度。
  */
-export async function fetchPoolUsage(cfg, { fetchImpl = fetch, strings } = {}) {
-  const t = strings ?? tableFor("zh");
+export async function fetchPoolUsage(cfg, { fetchImpl = fetch } = {}) {
   const base = (cfg.base || DEFAULT_BASE).replace(/\/$/, "");
   const url = `${base}/lite/console/v1/tokenplan/pool-usage`;
   const res = await fetchImpl(url, {
     headers: {
       Authorization: `Bearer ${cfg.access_token}`,
       Accept: "application/json",
-      // 实测这个头目前不影响返回（池名恒为中文），但声明真实语言总比谎报 zh-CN 好。
-      "Accept-Language": t.locale === "en" ? "en-US" : "zh-CN",
+      // 池名在协议层恒为中文（实测 zh-CN 与 en-US 拿到同一串），这里如实声明
+      // 中文即可：翻译发生在插件里，见 `i18n.mjs`。
+      "Accept-Language": "zh-CN",
     },
   });
   const text = await res.text();
@@ -476,7 +475,7 @@ export async function fetchPoolUsage(cfg, { fetchImpl = fetch, strings } = {}) {
   }
   if (!res.ok) {
     const reason = data?.details?.find?.((d) => typeof d?.message === "string")?.message;
-    throw new QuotaError(`${fill(t.quotaHttp, { status: res.status })}${reason ? ` ${reason}` : ""}`);
+    throw new QuotaError(`${fill(T.quotaHttp, { status: res.status })}${reason ? ` ${reason}` : ""}`);
   }
   return {
     plan: data?.plan ?? null,
@@ -505,7 +504,7 @@ export async function fetchPoolUsage(cfg, { fetchImpl = fetch, strings } = {}) {
  * workbuddy / zcode 两个社区插件的实现里对出来的。
  *
  * @param {{plan?: object, pools?: Array<object>}|Array<object>} usage - fetchPoolUsage 的结果（或裸 pools 数组）。
- * @param {{scopeModel?: string, strings?: object}} [opts] - strings 决定标签与单位的语言。
+ * @param {{scopeModel?: string}} [opts]
  * @returns {{plan?: string, windows: Array<object>, balance?: string}}
  */
 export function toQuota(usage, opts = {}) {
@@ -514,11 +513,10 @@ export function toQuota(usage, opts = {}) {
   const windows = [];
   let balance;
   const scopeModel = opts.scopeModel ?? "flash-lite";
-  const t = opts.strings ?? tableFor("zh");
 
   for (const pool of pools || []) {
     const dedicated = pool.pool_type === "dedicated";
-    const label = poolLabel(pool.name, t, dedicated);
+    const label = poolParts(pool.name, dedicated);
     const modelIds = Array.isArray(pool.model_ids) ? pool.model_ids.filter((x) => typeof x === "string") : [];
     const scope = modelIds.length
       ? { models: modelIds }
@@ -526,9 +524,9 @@ export function toQuota(usage, opts = {}) {
         ? { model: scopeModel }
         : {};
 
-    for (const [field, span, wname] of [
-      ["window_5h", 18000, t.window5h],
-      ["window_7d", 604800, t.windowWeekly],
+    for (const [field, span, zhSpan, enSpan] of [
+      ["window_5h", 18000, ZH.window5h, EN.window5h],
+      ["window_7d", 604800, ZH.windowWeekly, EN.windowWeekly],
     ]) {
       const w = pool[field];
       if (!w) continue;
@@ -542,11 +540,13 @@ export function toQuota(usage, opts = {}) {
       const amount = Math.max(0, limit - remaining);
       const resetsAt = Number(w.reset_at);
       windows.push({
-        name: `${label} · ${wname}`,
+        // 一个名字里两半语言各自成句（「通用积分池 · 5 小时窗口 / General Pool · 5h window」），
+        // 而不是把中英两个半截标签交叉拼在一起。
+        name: pair(`${label.zh} · ${zhSpan}`, `${label.en} · ${enSpan}`),
         used: Number(((amount / limit) * 100).toFixed(4)),
         amount,
         limit,
-        unit: t.unit,
+        unit: T.unit,
         display: `${compact(amount)} / ${compact(limit)}`,
         ...(Number.isFinite(resetsAt) && resetsAt > 0 ? { resetsAt } : {}),
         span,
@@ -556,7 +556,7 @@ export function toQuota(usage, opts = {}) {
 
     const grant = Number(pool.grant_balance);
     if (!dedicated && Number.isFinite(grant) && grant > 0) {
-      balance = `${fmtNum(grant)} ${t.unit}`;
+      balance = `${fmtNum(grant)} ${T.unit}`;
     }
   }
 
@@ -572,11 +572,11 @@ export function toQuota(usage, opts = {}) {
  * 一步到位：确保 token、拉数据、映射成 quota。
  *
  * @param {object} cfg - 凭据（会被就地更新，调用方负责写回）。
- * @param {{fetchImpl?: Function, now?: number, scopeModel?: string, strings?: object}} [opts]
+ * @param {{fetchImpl?: Function, now?: number, scopeModel?: string}} [opts]
  */
 export async function readQuota(cfg, opts = {}) {
-  const { fetchImpl = fetch, now = Date.now(), scopeModel, strings } = opts;
-  const changed = await ensureToken(cfg, { fetchImpl, now, strings });
-  const usage = await fetchPoolUsage(cfg, { fetchImpl, strings });
-  return { quota: toQuota(usage, { scopeModel, strings }), changed, usage };
+  const { fetchImpl = fetch, now = Date.now(), scopeModel } = opts;
+  const changed = await ensureToken(cfg, { fetchImpl, now });
+  const usage = await fetchPoolUsage(cfg, { fetchImpl });
+  return { quota: toQuota(usage, { scopeModel }), changed, usage };
 }

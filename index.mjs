@@ -14,9 +14,10 @@
  *     genuinely separate and both are collected at sign-in.
  *
  * The quota is reported through `auth.usage`, which is the only channel Magpie
- * offers: plugins cannot add panels or pages, and nothing feeds the 用量概览
- * analytics page. What `auth.usage` returns is rendered on the provider's
- * account row, in `magpie quota`, and at the gateway's `GET /v1/magpie/quotas`.
+ * offers for quota windows: a plugin's own page or panel cannot feed the 用量概览
+ * analytics page that Magpie draws itself. What `auth.usage` returns is rendered
+ * on the provider's account row, in `magpie quota`, and at the gateway's
+ * `GET /v1/magpie/quotas`.
  *
  * This file exports **exactly one function, and nothing else**, so the module
  * also loads under OpenCode, which refuses an entry exporting any non-function
@@ -28,7 +29,7 @@
 import { PROVIDER, ICON, apiKeyOf, consoleAuthOf, fellBack, normalizeKey, readAuth } from "./internal.mjs";
 import { FALLBACK_MODELS, NPM, createCatalog, toConfigModel, toProviderModel } from "./models.mjs";
 import { accountNameOf, QuotaError, readCredentials, readQuota, writeCredentials } from "./quota.mjs";
-import { fill, resolveLocale, strings as tableFor } from "./i18n.mjs";
+import { fill, T } from "./i18n.mjs";
 
 const DEFAULT_QUOTA_TTL_MS = 60_000;
 
@@ -40,8 +41,8 @@ const DEFAULT_QUOTA_TTL_MS = 60_000;
  * @returns {Promise<object>} the hooks the host calls.
  */
 export async function SenseNovaPlugin({ client } = {}, options = {}) {
-  const locale = resolveLocale(options.locale);
-  const t = tableFor(locale);
+  // Every label carries both languages: the host hands a plugin no locale, and
+  // this one has no settings UI left to ask in (see `i18n.mjs`).
   const opts = {
     baseURL: options.baseURL ?? undefined,
     quotaTtlMs: Number(options.quotaTtlMs) > 0 ? Number(options.quotaTtlMs) : DEFAULT_QUOTA_TTL_MS,
@@ -116,19 +117,19 @@ export async function SenseNovaPlugin({ client } = {}, options = {}) {
 
     const cfg = credentialsFor(auth);
     if (!cfg.access_token && !cfg.refresh_token && !cfg.cookie && !cfg.password) {
-      const value = { error: t.noAccount };
+      const value = { error: T.noAccount };
       quotaCache.set(cacheKey, { at: Date.now(), value });
       return value;
     }
 
     try {
-      const { quota, changed } = await readQuota(cfg, { scopeModel: opts.scopeModel, strings: t });
+      const { quota, changed } = await readQuota(cfg, { scopeModel: opts.scopeModel });
       if (changed && cfg.__writable) writeCredentials(cfg, cfg.__file);
       // 套餐名用接口给的（实际是 "Free Plan"），拿不到才退回通用叫法。
       const { plan, ...rest } = quota;
       const user = accountLabel(cfg);
       const value = {
-        plan: plan ?? t.planFallback,
+        plan: plan ?? T.planFallback,
         ...(user ? { user } : {}),
         ...rest,
       };
@@ -139,9 +140,9 @@ export async function SenseNovaPlugin({ client } = {}, options = {}) {
       // exactly when a token that just expired should be retried.
       const user = accountLabel(cfg);
       const value = {
-        plan: t.planFallback,
+        plan: T.planFallback,
         ...(user ? { user } : {}),
-        error: error instanceof QuotaError ? error.message : fill(t.readFailed, { detail: error.message }),
+        error: error instanceof QuotaError ? error.message : fill(T.readFailed, { detail: error.message }),
       };
       quotaCache.set(cacheKey, { at: Date.now() - opts.quotaTtlMs + 15_000, value });
       log("warn", `sensenova: quota read failed: ${error.message}`);
@@ -245,12 +246,12 @@ export async function SenseNovaPlugin({ client } = {}, options = {}) {
       methods: [
         {
           type: "api",
-          label: "SenseNova API key",
+          label: T.methodLabel,
           prompts: [
             {
               type: "text",
               key: "key",
-              message: t.promptKey,
+              message: T.promptKey,
               placeholder: "sk-…",
             },
             {
@@ -262,20 +263,20 @@ export async function SenseNovaPlugin({ client } = {}, options = {}) {
               // the account row read as the account instead of "API key …HohJ".
               // Reading it back is `consoleAuthOf`'s job.
               key: "email",
-              message: t.promptAccount,
-              placeholder: t.placeholderAccount,
+              message: T.promptAccount,
+              placeholder: T.placeholderAccount,
             },
             {
               type: "text",
               key: "password",
-              message: t.promptPassword,
-              placeholder: t.placeholderPassword,
+              message: T.promptPassword,
+              placeholder: T.placeholderPassword,
             },
           ],
           async authorize(inputs) {
             const key = normalizeKey(inputs?.key);
             if (!key) {
-              throw new Error(t.keyRequired);
+              throw new Error(T.keyRequired);
             }
             /**
              * Nothing to name the account with here beyond the key.

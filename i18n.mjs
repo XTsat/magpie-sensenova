@@ -1,10 +1,16 @@
 /**
- * UI strings, in the two languages the platform serves.
+ * UI strings, in the two languages the platform serves — shown together.
  *
  * Magpie exposes no locale to a plugin and gives a plugin no way to add settings
- * UI, so the language is an option on this plugin (`locale`) that defaults to
- * following the machine. The labels this file produces are not decoration: they
- * land in Magpie's own account card and in `magpie quota`.
+ * UI, so the plugin cannot know which language the window is in. Rather than
+ * guess, every string this file produces carries both languages, `zh / en`:
+ * a wrong guess shows the user the wrong language, and a correct guess still
+ * hides what the other one said.
+ *
+ * That is also why there is no `locale` option: it could only be changed from
+ * the command line, and a plugin whose wording is half a language away from the
+ * rest of the window is worse than one that answers in both. The labels are not
+ * decoration: they land in Magpie's own account card and in `magpie quota`.
  *
  * Why the plugin has to translate at all: the console's quota endpoint returns
  * its pool names in Chinese no matter what `Accept-Language` says. Observed on a
@@ -15,12 +21,8 @@
  * @module magpie-sensenova/i18n
  */
 
-/** The languages with a string table here. */
-export const LOCALES = ["zh", "en"];
-
-const ZH = {
-  locale: "zh",
-
+/** The Chinese half of every label. */
+export const ZH = {
   poolGeneral: "通用积分池",
   poolDedicated: "专属积分池",
   window5h: "5 小时窗口",
@@ -28,7 +30,7 @@ const ZH = {
   unit: "积分",
   planFallback: "Token Plan",
 
-  noAccount: "没有可用于读取额度的 SenseNova 账号。在插件里补填账号密码，或先运行 snquota login。",
+  noAccount: "没有可读额度的 SenseNova 账号：补填账号密码，或先运行 snquota login。",
   readFailed: "读取额度失败: {detail}",
   refreshFailed: "refresh_token 续期失败: {detail}",
   exchangeFailed: "用授权码换令牌失败: {detail}",
@@ -42,7 +44,7 @@ const ZH = {
   chainTooLong: "登录跳转次数超出上限",
   loginRejected: "登录被拒绝（HTTP {status}）",
   quotaHttp: "读取额度失败 HTTP {status}",
-  noRenewalPath: "access_token 已过期，且没有 refresh_token / 会话 cookie / 账号密码可用。请运行 snquota login 重新登录。",
+  noRenewalPath: "access_token 已过期，且没有 refresh_token / 会话 cookie / 账号密码可续期。请运行 snquota login。",
 
   loginInvalidAccount: "账号或密码不正确",
   loginBadPassword: "密码不正确",
@@ -51,17 +53,17 @@ const ZH = {
   loginNoPermission: "该账号没有权限",
   loginTooFrequent: "操作过于频繁",
 
+  methodLabel: "SenseNova API Key",
   promptKey: "SenseNova API Key（控制台 → API-Key 管理）",
-  promptAccount: "可选：SenseNova 账号，用来读取控制台积分额度（留空则读 snquota 已存的凭据）",
-  promptPassword: "可选：账号密码（明文保存在本机 plugin-auth.json，仅用于读取额度）",
+  promptAccount: "可选：读额度用的 SenseNova 账号（留空 = 用 snquota 已存的凭据）",
+  promptPassword: "可选：账号密码（明文存在本机 plugin-auth.json，只用于读额度）",
   placeholderAccount: "手机号 / 邮箱",
   placeholderPassword: "留空 = 不保存密码",
-  keyRequired: "SenseNova API Key 不能为空：没有它这个供应商无法发出任何请求。",
+  keyRequired: "API Key 不能为空：没有它这个供应商无法发出任何请求。",
 };
 
-const EN = {
-  locale: "en",
-
+/** The English half of those same labels, key for key. */
+export const EN = {
   poolGeneral: "General Pool",
   poolDedicated: "Dedicated Pool",
   window5h: "5h window",
@@ -69,7 +71,7 @@ const EN = {
   unit: "credits",
   planFallback: "Token Plan",
 
-  noAccount: "No SenseNova account available to read the quota. Fill in an account in the plugin, or run snquota login first.",
+  noAccount: "No SenseNova account to read the quota: fill one in, or run snquota login first.",
   readFailed: "Quota read failed: {detail}",
   refreshFailed: "refresh_token renewal failed: {detail}",
   exchangeFailed: "Exchanging the authorization code for a token failed: {detail}",
@@ -83,7 +85,7 @@ const EN = {
   chainTooLong: "The sign-in redirect chain exceeded its hop limit",
   loginRejected: "Sign-in refused (HTTP {status})",
   quotaHttp: "Reading the quota failed with HTTP {status}",
-  noRenewalPath: "The access_token has expired and there is no refresh_token, session cookie, or account password to renew it with. Run snquota login to sign in again.",
+  noRenewalPath: "The access_token expired and nothing can renew it (no refresh_token, session cookie, or account password). Run snquota login.",
 
   loginInvalidAccount: "Wrong account or password",
   loginBadPassword: "Wrong password",
@@ -92,15 +94,30 @@ const EN = {
   loginNoPermission: "This account has no permission",
   loginTooFrequent: "Too many attempts",
 
+  methodLabel: "SenseNova API Key",
   promptKey: "SenseNova API key (console → API-Key management)",
-  promptAccount: "Optional: the SenseNova account used to read the console's credit quota (blank reads the credentials snquota already stored)",
-  promptPassword: "Optional: the account password (stored in plaintext in this machine's plugin-auth.json, used only to read quota)",
+  promptAccount: "Optional: the SenseNova account for the quota (blank = the credentials snquota already stored)",
+  promptPassword: "Optional: the account password (plaintext in this machine's plugin-auth.json, quota only)",
   placeholderAccount: "phone / email",
   placeholderPassword: "blank = do not store a password",
-  keyRequired: "The SenseNova API key cannot be empty: without it this provider cannot make any request.",
+  keyRequired: "The API key cannot be empty: without it this provider cannot send any request.",
 };
 
-const TABLES = { zh: ZH, en: EN };
+/**
+ * One label in both languages: `zh / en`.
+ *
+ * A string that is already the same in both (a product name, say) is written
+ * once instead of twice — "Token Plan / Token Plan" reads like a typo.
+ *
+ * @param {string} zh
+ * @param {string} en
+ * @returns {string}
+ */
+export function pair(zh, en) {
+  const a = String(zh ?? "");
+  const b = String(en ?? "");
+  return a === b ? a : `${a} / ${b}`;
+}
 
 /**
  * Fill `{name}` placeholders. Unknown names are left as they are, so a missing
@@ -112,66 +129,23 @@ export function fill(template, values) {
   );
 }
 
-/** The table for a resolved locale. */
-export function strings(locale = "zh") {
-  return TABLES[locale] ?? ZH;
-}
-
-/** The OS locale as Node reports it, or "" when there is nothing to report. */
-function osLocale() {
-  try {
-    return typeof Intl !== "undefined" && typeof Intl.DateTimeFormat === "function"
-      ? Intl.DateTimeFormat().resolvedOptions().locale
-      : "";
-  } catch {
-    return "";
-  }
-}
-
 /**
- * Decide the locale.
+ * Every string the plugin shows a person, both languages at once.
  *
- * `Intl` first, because it reflects the OS setting on every platform including
- * Windows, where `LANG` is usually `C.UTF-8` or unset and would be a lie. The
- * environment is only a fallback, for a Node built without full ICU (where
- * `Intl` reports its own default rather than the machine's) or an environment
- * that sets `LC_ALL` deliberately; a POSIX `C`/`POSIX` value is skipped rather
- * than read as "not Chinese, therefore English".
- *
- * @param {string|undefined} value - the `locale` option: `"auto"`, `"zh"`, or `"en"`.
- * @param {object} [env] - environment to read, injected for testing.
- * @param {string} [intl] - the OS locale, injected for testing.
- * @returns {"zh"|"en"}
+ * There is one table and no locale lookup: the host gives a plugin no locale to
+ * resolve, and each entry already carries both languages. A caller that wants a
+ * half language picks `ZH` or `EN` itself — nothing in the plugin does.
  */
-export function resolveLocale(value, env = process.env, intl = osLocale()) {
-  if (value === "zh" || value === "en") return value;
-  if (value && value !== "auto") {
-    const explicit = String(value).toLowerCase();
-    if (explicit.startsWith("zh")) return "zh";
-    if (explicit.startsWith("en")) return "en";
-  }
-
-  if (/^zh/i.test(intl)) return "zh";
-  if (/^en/i.test(intl)) return "en";
-
-  for (const key of ["LC_ALL", "LC_MESSAGES", "LANG"]) {
-    const raw = env?.[key];
-    if (typeof raw !== "string") continue;
-    const tag = raw.trim().split(".")[0].split("_")[0].toLowerCase();
-    if (!tag || tag === "c" || tag === "posix") continue;
-    if (tag.startsWith("zh")) return "zh";
-    if (tag.startsWith("en")) return "en";
-  }
-  return "en";
-}
+export const T = Object.fromEntries(Object.keys(ZH).map((key) => [key, pair(ZH[key], EN[key])]));
 
 /**
- * A pool name from the API, in the requested language.
+ * A pool name from the API, in each language.
  *
- * The endpoint answers in Chinese whatever `Accept-Language` says, so English
- * comes from the naming rule the console itself uses: a dedicated pool is
- * "<family>积分池", and the console renders that "<family> Dedicated Pool"
- * (`Flash-Lite积分池` → `Flash-Lite Dedicated Pool`, as its English site shows).
+ * The endpoint answers in Chinese whatever `Accept-Language` says, so the
+ * English half comes from the naming rule the console itself uses: a dedicated
+ * pool is "<family>积分池", and the console renders that "<family> Dedicated
+ * Pool" (`Flash-Lite积分池` → `Flash-Lite Dedicated Pool`, as its English site
+ * shows).
  *
  * The shared pool is the exception, and it is why this branches on `dedicated`
  * rather than translating every name: its label is this plugin's own generic
@@ -182,20 +156,22 @@ export function resolveLocale(value, env = process.env, intl = osLocale()) {
  * rather than mangled, and a missing one falls back to the generic label.
  *
  * @param {string|undefined} name - `pool.name` from the endpoint.
- * @param {object} t - the string table.
  * @param {boolean} dedicated - whether the pool is model-scoped.
+ * @returns {{zh: string, en: string}} the label in each language.
  */
-export function poolLabel(name, t, dedicated) {
-  if (!dedicated) return t.poolGeneral;
+export function poolParts(name, dedicated) {
   const raw = typeof name === "string" ? name.trim() : "";
-  if (!raw) return t.poolDedicated;
-  if (t.locale === "zh") return raw;
+  if (!dedicated) return { zh: ZH.poolGeneral, en: EN.poolGeneral };
+  if (!raw) return { zh: ZH.poolDedicated, en: EN.poolDedicated };
   // The API has answered both "Flash-Lite积分池" and "Flash-Lite 专属积分池"
   // depending on the response, so accept the optional 专属 rather than leaving
   // it stranded inside an otherwise-English label. Collapsing the spaces keeps
   // the "Flash-Lite " prefix from doubling up with the replacement.
   if (/(?:专属)?积分池$/.test(raw)) {
-    return raw.replace(/(?:专属)?积分池$/, " Dedicated Pool").replace(/\s+/g, " ").trim();
+    return {
+      zh: raw,
+      en: raw.replace(/(?:专属)?积分池$/, " Dedicated Pool").replace(/\s+/g, " ").trim(),
+    };
   }
-  return raw.replace(/\s+/g, " ").trim();
+  return { zh: raw, en: raw.replace(/\s+/g, " ").trim() };
 }
