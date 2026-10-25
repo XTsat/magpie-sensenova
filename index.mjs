@@ -26,7 +26,7 @@
  * @module magpie-sensenova
  */
 
-import { PROVIDER, ICON, apiKeyOf, consoleAuthOf, fellBack, normalizeKey, readAuth } from "./internal.mjs";
+import { PROVIDER, ICON, apiKeyOf, consoleAuthOf, fellBack, readAuth } from "./internal.mjs";
 import { FALLBACK_MODELS, NPM, createCatalog, toConfigModel, toProviderModel } from "./models.mjs";
 import { accountNameOf, QuotaError, readCredentials, readQuota, writeCredentials } from "./quota.mjs";
 import { fill, T } from "./i18n.mjs";
@@ -237,7 +237,14 @@ export async function SenseNovaPlugin({ client } = {}, options = {}) {
       },
 
       /**
-       * One method: an API key, plus the console account that can read quota.
+       * One method: the API key, plus the console account that can read quota.
+       *
+       * The key is not asked here. Magpie asks an `api` method for the key
+       * itself, in a masked field it draws after these prompts, and keeps it —
+       * measured. A `key` prompt on top of that asks for the key twice, and the
+       * second answer is the one that gets thrown away (the key `authorize`
+       * returns outranks the field the user just typed into). So the plugin
+       * only asks what the host cannot: the console account.
        *
        * The console fields are optional and only asked for once, at sign-in,
        * because the quota endpoint has no API-key path. Leaving them blank
@@ -248,12 +255,6 @@ export async function SenseNovaPlugin({ client } = {}, options = {}) {
           type: "api",
           label: T.methodLabel,
           prompts: [
-            {
-              type: "text",
-              key: "key",
-              message: T.promptKey,
-              placeholder: "sk-…",
-            },
             {
               type: "text",
               // `email` rather than `username`: Magpie names an account from
@@ -267,28 +268,21 @@ export async function SenseNovaPlugin({ client } = {}, options = {}) {
               placeholder: T.placeholderAccount,
             },
             {
-              type: "text",
+              // A password typed into a plain text field is on screen and in
+              // the DOM; the host renders this one masked.
+              type: "password",
               key: "password",
               message: T.promptPassword,
               placeholder: T.placeholderPassword,
             },
           ],
-          async authorize(inputs) {
-            const key = normalizeKey(inputs?.key);
-            if (!key) {
-              throw new Error(T.keyRequired);
-            }
-            /**
-             * Nothing to name the account with here beyond the key.
-             *
-             * The account field is prompted under the key `email`, so its answer
-             * reaches Magpie's naming rule through `metadata.email` on its own —
-             * measured. Returning `accountId` or a `metadata` object from here
-             * does not help: `accountId` is documented for oauth results and was
-             * observed to do nothing for an api-type method, and a returned
-             * `metadata` is replaced by the prompt answers before it is stored.
-             */
-            return { type: "success", key };
+          /**
+           * Nothing to return but success: the credential is the key the host
+           * collected, and `inputs` does not carry it (measured — returning a
+           * key here overrides what the user typed into that field).
+           */
+          async authorize() {
+            return { type: "success" };
           },
         },
       ],

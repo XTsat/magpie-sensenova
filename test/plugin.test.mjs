@@ -168,30 +168,42 @@ test("账号提问的 key 必须是 email，否则账号行只显示 API Key", a
   const plugin = await SenseNovaPlugin({}, {});
   assert.deepEqual(
     plugin.auth.methods[0].prompts.map((p) => p.key),
-    ["key", "email", "password"]
+    ["email", "password"]
   );
 });
 
-test("三条提示的文案都是中英同显", async () => {
+test("不自己问 API Key：宿主会另开一个遮蔽输入框再问一遍", async () => {
+  // 实测（Magpie 0.1.1489 网页版）：api 类型的方法走完自己的提示后，宿主总会
+  // 再要一次 API Key 并把它存成凭据；提示里再放一条 key 提问就是问两遍，而且
+  // 第二遍填的内容会被 authorize 的返回值盖掉（用户以为改掉的其实是第一次的）。
+  const plugin = await SenseNovaPlugin({}, {});
+  const keys = plugin.auth.methods[0].prompts.map((p) => p.key);
+  assert.equal(keys.includes("key"), false);
+});
+
+test("密码提问标成 password：宿主按这个类型遮蔽输入", async () => {
+  const plugin = await SenseNovaPlugin({}, {});
+  const password = plugin.auth.methods[0].prompts.find((p) => p.key === "password");
+  assert.equal(password.type, "password");
+});
+
+test("两条提示的文案都是中英同显", async () => {
   const plugin = await SenseNovaPlugin({}, {});
   for (const p of plugin.auth.methods[0].prompts) {
     assert.ok(typeof p.message === "string" && p.message.length > 0, `${p.key} 缺 message`);
     assert.match(p.message, / \/ /, `${p.key} 的文案应同时带中英两半`);
   }
   // 同一句里中文在前、英文在后：宿主没有语言通道，两种读者都要能看懂。
-  assert.match(plugin.auth.methods[0].prompts[1].message, /可选/);
-  assert.match(plugin.auth.methods[0].prompts[1].message, /Optional/);
+  assert.match(plugin.auth.methods[0].prompts[0].message, /可选/);
+  assert.match(plugin.auth.methods[0].prompts[0].message, /Optional/);
 });
 
-test("authorize 只回 {type, key}，命名交给提示字段", async () => {
+test("authorize 只回 success：凭据是宿主收下的那把 key", async () => {
+  // 实测：宿主不会把用户填进 key 框的值放进 inputs；authorize 若返回 key，
+  // 那个值反而会盖掉用户填的。什么都不返回才是「用宿主收下的那把」。
   const plugin = await SenseNovaPlugin({}, {});
-  const out = await plugin.auth.methods[0].authorize({ key: "sk-test", email: "13800000000" });
-  assert.deepEqual(out, { type: "success", key: "sk-test" });
-});
-
-test("authorize 仍然拒绝空 key", async () => {
-  const plugin = await SenseNovaPlugin({}, {});
-  await assert.rejects(() => plugin.auth.methods[0].authorize({ key: "  " }), /API Key|API key/);
+  const out = await plugin.auth.methods[0].authorize({ email: "13800000000" });
+  assert.deepEqual(out, { type: "success" });
 });
 
 test("consoleAuthOf 认 email，也兼容旧的 username / account", async () => {

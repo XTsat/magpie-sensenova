@@ -79,7 +79,7 @@ magpie-sensenova/
 - 依赖方向严格单向，只允许这一张 import 图：
 
   ```
-  index.mjs ──┬─→ internal.mjs   (PROVIDER, ICON, apiKeyOf, consoleAuthOf, fellBack, normalizeKey, readAuth)
+  index.mjs ──┬─→ internal.mjs   (PROVIDER, ICON, apiKeyOf, consoleAuthOf, fellBack, readAuth)
               ├─→ models.mjs     (FALLBACK_MODELS, NPM, createCatalog, toConfigModel, toProviderModel)
               ├─→ quota.mjs      (accountNameOf, QuotaError, readCredentials, readQuota, writeCredentials)
               └─→ i18n.mjs       (fill, pair, poolParts, T, ZH, EN)
@@ -100,6 +100,7 @@ magpie-sensenova/
 
 1. **控制台内部端点路径不得写进 `README.md` / `README_en.md` / `NOTICE.md`**（历史提交明确删除过两次）；用户文档只写「路径在 `quota.mjs` 里」。代码中只允许出现在必需处：`quota.mjs` 的实现与文件头注释、`index.mjs` 的文件头注释、以及测试夹具。
 2. **账号行命名只能靠 sign-in prompt 的 key 名，必须是 `email`**：`authorize` 返回 `accountId`、`metadata` 都无效，`usage.user` 也不改行名。`consoleAuthOf` 仍兼容旧的 `username` / `account` 拼写；回归测试钉住了 prompt key，别「优化」回去。
+2a. **不要在 `prompts` 里再放一条 `key` 提问**：`api` 类型的方法走完自家提示后，宿主**总会**再画一个遮蔽输入框要 API Key 并把它存成凭据（实测 0.1.1489，网页版与 CLI 同序：提示在前、key 框在后）。再放一份 `key` 提问就是问两遍，而且 `authorize` 一旦返回 `key`，那个值会**盖掉**用户在框里填的（实测：两次填不同的假 key，存下的是 `authorize` 返回的那个；`authorize` 返回 `{ type: "success" }` 时存下的才是框里那个）。`authorize` 的 `inputs` 里**没有**用户填进框的值（实测），所以「空 key」只能由宿主把关。`keyless: true` 会让宿主跳过该框、以空串当 key 交给插件，本插件没用它。
 3. **额度窗口必须带 `amount`（已用量）**：只有 `used` + `limit` 时 Magpie 会渲染成 `0 / limit`；`display` 必须用 `compact()` 生成，才能与 Magpie 自身格式对齐。`amount` 不在官方插件文档的窗口字段列表里，属于实测结论。
 4. **`remaining` 缺失或非有限值时跳过该窗口，绝不默认 0**：宁可不上报，也不要在卡片上编造 `0 / limit`。
 5. **凭据文件里 `__` 前缀键按前缀整体剥离，不用手写白名单**：曾因白名单漏掉 `__writable` 而把内部标记写进用户的 CLI 配置文件。
@@ -110,7 +111,7 @@ magpie-sensenova/
 10. **`fetch` 钩子必须克隆 `Request`，不能按 URL 重建**：否则 POST 的 body 会静默丢失（曾是两个真实 bug 之一，有回归测试）。
 11. **零依赖是硬约束**：只用 Node 内置模块（`node:` 前缀）与全局 `fetch`；新增第三方依赖会破坏「迁入 community 仓库无需改代码」的承诺，必须先与用户确认。
 12. **纯源码仓库**：被 Magpie 按仓库安装时读的是当前代码，所以被加载的文件必须已提交，且不要引入任何构建产物。
-13. **README 不写测试、构建与开发细节**：面向使用者的文档只讲怎么装、怎么配、怎么看额度、有什么限制与风险；测试数与覆盖点只在 `AGENTS.md` 的 3 与 8.3 记录（历史测试数 50 → 53 → 55 → 70 → 57 → 52），增删测试时改那里。
+13. **README 不写测试、构建与开发细节**：面向使用者的文档只讲怎么装、怎么配、怎么看额度、有什么限制与风险；测试数与覆盖点只在 `AGENTS.md` 的 3 与 8.3 记录（历史测试数 50 → 53 → 55 → 70 → 57 → 52 → 53），增删测试时改那里。
 14. 不要提交 `node_modules/`、`*.log`、`.DS_Store`；全仓库强制 LF。
 15. **文案一律中英同显，不要加语言开关**：宿主不向插件传任何 locale（实测宿主 bundle 里 `locale`/`language`/`Intl` 零命中），provider 插件也拿不到网页版「选项」JSON 编辑器（它只对 gateway/middleware 出现，实测 0.1.1489）；插件自带的 settings 面板则会让真实浏览器整页卡死（Chrome「页面没有响应」），已整块移除（`magpie.panels`、`panel/`、`package.json` 的 `magpie.options` 都不再存在）。因此 `i18n.mjs` 只保留一张表 `T`，每条都是 `pair(ZH[k], EN[k])` → `中文 / English`，两半相同时只写一遍；额度窗口名要按「两半各自成句」拼（`通用积分池 · 5 小时窗口 / General Pool · 5h window`），不能交叉拼成半中半英。**新增文案只能进这张表，禁止再引入 locale/语言选项或按语言分表**，`test/i18n.test.mjs` 钉住了键集合对称与「表里没有 locale」。
 
@@ -121,7 +122,7 @@ magpie-sensenova/
 - **语言版本**：JavaScript（ESM，`"type": "module"`，文件后缀 `.mjs`），Node.js **≥ 20**（`package.json` 的 `engines.node`）。当前开发机实测 Node v24.15.0。
 - **包管理**：npm；**无 lock 文件**（运行时零依赖，不生成 `package-lock.json`）；依赖清单文件 `package.json` 是唯一声明来源。
 - **构建/运行**：**无构建步骤**。安装方式是 `magpie plugin add <本仓库路径>`，随后 `magpie plugin login sensenova`；开发时的入口就是 `index.mjs`。插件没有语言或其他选项需要设置（文案中英同显，见 2.3 第 15 条）。
-- **测试**：`node --test test/*.test.mjs`（等价 `npm test`），当前 **52 个测试全部通过**，全程无网络（fetch 全部打桩）、不需要浏览器。
+- **测试**：`node --test test/*.test.mjs`（等价 `npm test`），当前 **53 个测试全部通过**，全程无网络（fetch 全部打桩）、不需要浏览器。
 - **禁止引入**：不引入与原功能无关的依赖；**运行时依赖必须保持为零**，需要装包时先与用户确认并说明理由；重活一律走 Node 内置能力。
 - 技术栈升级（Node 版本下限、宿主契约、主要依赖）属于用户可见变更：必须同步更新 `README.md` 对应章节，并先与用户确认。
 
@@ -169,7 +170,7 @@ magpie-sensenova/
 - 精确捕获，禁止裸 `except` 式的空 catch（JS 里即 `catch {}` 不作处理）；确需忽略时写明理由。
 - 唯一自定义异常是 `QuotaError extends Error`（带 `kind`，默认 `"auth"`），额度链路的失败用它表达；其它异常在入口处套上本地化文案（`readFailed`）后返回。
 - 脏数据降级：`normalizeModel` 用 `positive` / `text` / `list` 守卫逐字段校验，缺字段跳过而不是抛错或编造；额度窗口缺 `remaining` 就跳过（见 2.3 第 4 条）。
-- 失败链路要清晰：无 API Key → `authorize` 抛「key 必填」、模型列表走 `fellBack` 快照、`fetch` 删除 `authorization` 头；无控制台凭据 → 额度返回错误文案，**模型调用不受影响**。
+- 失败链路要清晰：没填 API Key → 宿主自己拦下（插件拿不到那个框的值，见 2.3 第 2a 条）、模型列表走 `fellBack` 快照、`fetch` 删除 `authorization` 头；无控制台凭据 → 额度返回错误文案，**模型调用不受影响**。
 
 ### 4.6 并发
 
@@ -220,7 +221,7 @@ magpie-sensenova/
 - **导出**：`index.mjs` 只导出 `SenseNovaPlugin`（恰好一个函数）。
 - **`config(cfg)`**：就地写入 `cfg.provider.sensenova`（`name` / `npm` / `api` / `models`）。
 - **`provider`**：`id = "sensenova"`，`models(provider, { auth })` 有 key 时拉活列表，否则返回带回退标记的内置快照。
-- **`auth`**：`icon`（data URI）、`loader(getAuth)`（返回 `{ baseURL, apiKey, fetch }`，`fetch` 每次重读凭据、只重写 `authorization`）、`usage(getAuth)`、`methods[0]`（`type: "api"`，prompt 顺序固定为 `key` → `email` → `password`，`authorize` 只返回 `{ type: "success", key }`）。
+- **`auth`**：`icon`（data URI）、`loader(getAuth)`（返回 `{ baseURL, apiKey, fetch }`，`fetch` 每次重读凭据、只重写 `authorization`）、`usage(getAuth)`、`methods[0]`（`type: "api"`，只有两条自家 prompt：`email`（text）→ `password`（`type: "password"`，宿主遮蔽输入），之后由宿主自己的 API Key 框收 key；`authorize` 只返回 `{ type: "success" }`，不碰 key）。
 - **选项**：没有语言选项，也没有 `magpie.options` 示例值；`plugins.json` 的 `options` 只承载上表的四个配置项（`baseURL` / `quotaTtlMs` / `scopeModel` / `credentialsFile`），可用 `magpie plugin options <spec> '<json>'` 读写。
 - **外部端点**：公开的 `token.sensenova.cn/v1`（模型调用与 `GET /models`，默认值在 `models.mjs`，`index.mjs` 仅重复同一字面量）、`platform.sensenova.cn` 上的控制台内部端点（额度，**完整路径只写在 `quota.mjs`**：实现与文件头注释，另见 `index.mjs` 文件头与测试夹具）、`iam.sensecoreapi.cn` / `iam.sensecoreapi.tech`（控制台 token 续期，映射表在 `quota.mjs`）。
 - 命名保持一致：新增的 prompt、配置项、文案 key 都沿用现有拼写风格，不混用两套。
@@ -401,7 +402,7 @@ refactor(i18n): 合并两处重复的池名归一逻辑
 
 提交前必须运行：
 
-- **测试**：`node --test test/*.test.mjs`（或 `npm test`），必须 **52/52 通过**；新增行为要补测试（`test/` 下按模块归档）。
+- **测试**：`node --test test/*.test.mjs`（或 `npm test`），必须 **53/53 通过**；新增行为要补测试（`test/` 下按模块归档）。
 - **冒烟**：`node -e 'import("./index.mjs").then((m) => console.log(typeof m.SenseNovaPlugin))'` 输出 `function`（验证入口可加载、图标与模块图未坏）。
 - **无构建、无 lint**：本项目没有 lint/format 命令，改动靠人工保持与相邻文件一致。
 - 测试不得依赖网络与真实凭据：一律打桩 `globalThis.fetch`（并在 `finally` 还原）或通过 `fetchImpl` 注入；临时文件用 `fs.mkdtempSync(os.tmpdir())` 并在 `finally` 清理。
@@ -413,7 +414,7 @@ refactor(i18n): 合并两处重复的池名归一逻辑
 
 - [ ] 依赖方向：新代码没有让底层模块反向依赖 `index.mjs`，`index.mjs` 仍只导出一个函数
 - [ ] 新增运行时文件：已加入 `package.json` 的 `files` 白名单
-- [ ] 约定与坑：核对了 2.3 的 15 条（尤其额度 `amount`、`remaining` 缺失跳过、`__` 键剥离、回写条件、续期顺序）
+- [ ] 约定与坑：核对了 2.3 的 16 条（含 2a）（尤其额度 `amount`、`remaining` 缺失跳过、`__` 键剥离、回写条件、续期顺序）
 - [ ] 注释：只写 non-obvious reason，语言跟随所在文件，无残留中间状态、无被注释掉的旧代码
 - [ ] 日志：没有新增 `console.*`；需要日志时走宿主 logger 且包 try/catch；用户可见文案进 `i18n.mjs`
 - [ ] i18n：新增文案已同时进 `ZH` 与 `EN`（键集合一致），且 `T` 里每条都是 `中文 / English`；没有重新引入 locale 选项，`test/i18n.test.mjs` 通过

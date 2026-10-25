@@ -30,13 +30,13 @@ magpie plugin login sensenova
 
 也可以把仓库路径直接交给 `magpie plugin add <path to this repository>`。
 
-登录会问三件事：
+登录会问三件事，前两件都可以不填：
 
-1. **API Key**（必填）——在控制台 → API-Key 管理里创建。没有它，provider 发不出任何请求。
-2. **账号**（可选）——用于读控制台的积分额度；填了它，账号行就显示这个名字。
-3. **密码**（可选）——同上。
+1. **账号**（可选）——用于读控制台的积分额度；填了它，账号行就显示这个名字。
+2. **密码**（可选，输入时不回显）——同上。
+3. **API Key**（必填）——在控制台 → API-Key 管理里创建，输入时不回显。没有它，provider 发不出任何请求。
 
-后两项留空没问题：插件会改读 `~/.sensenova-quota.json`，那是本机 `snquota` CLI 写的配置。
+前两件留空没问题：插件会改读 `~/.sensenova-quota.json`，那是本机 `snquota` CLI 写的配置。
 
 ### Windows 下登录提示失败
 
@@ -48,10 +48,10 @@ magpie: read /dev/stdin: The handle is invalid.
 
 这是 Magpie 宿主自己在读标准输入，不是本插件的问题，任何用文本提示的插件都一样。两种绕法：
 
-**改在命令行里答。** 管道输入可用，答案按提示顺序读取——API Key、账号、密码。末尾那行 `.` 很关键：只有三行时，读取器在最后一个提示前就用完并报 EOF。
+**改在命令行里答。** 管道输入可用，答案按提示顺序读取——账号、密码、API Key。末尾那行 `.` 很关键：只有三行时，读取器在最后一个提示前就用完并报 EOF。
 
 ```bash
-printf '%s\n%s\n%s\n.\n' "$SENSENOVA_API_KEY" "$ACCOUNT" "$PASSWORD" | magpie plugin login sensenova
+printf '%s\n%s\n%s\n.\n' "$ACCOUNT" "$PASSWORD" "$SENSENOVA_API_KEY" | magpie plugin login sensenova
 ```
 
 **或者用 Magpie 应用自带的登录界面**，它不经过 CLI 的读取器。

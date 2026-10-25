@@ -30,13 +30,13 @@ magpie plugin login sensenova
 
 You can also hand the repository path straight to `magpie plugin add <path to this repository>`.
 
-Sign-in asks three things:
+Sign-in asks three things, and the first two can be left blank:
 
-1. **API key** (required) — create one in the console → API-Key management. Without it the provider cannot make any request.
-2. **Account** (optional) — used to read the console's credit quota; if you fill it in, the account row shows that name.
-3. **Password** (optional) — same.
+1. **Account** (optional) — used to read the console's credit quota; if you fill it in, the account row shows that name.
+2. **Password** (optional, not echoed as you type) — same.
+3. **API key** (required) — create one in the console → API-Key management; it is not echoed as you type either. Without it the provider cannot make any request.
 
-Leaving the last two blank is fine: the plugin falls back to `~/.sensenova-quota.json`, written on this machine by the `snquota` CLI.
+Leaving the first two blank is fine: the plugin falls back to `~/.sensenova-quota.json`, written on this machine by the `snquota` CLI.
 
 ### If the prompts fail on Windows
 
@@ -48,10 +48,10 @@ magpie: read /dev/stdin: The handle is invalid.
 
 That is Magpie's own host code reading its standard input, not this plugin: every package using a text prompt behaves the same way. Two ways round it:
 
-**Answer on the command line instead.** Piped input works, and the answers are read in prompt order — API key, account, password. The trailing `.` line matters: with only three lines the reader runs out before the last prompt and reports EOF.
+**Answer on the command line instead.** Piped input works, and the answers are read in prompt order — account, password, API key. The trailing `.` line matters: with only three lines the reader runs out before the last prompt and reports EOF.
 
 ```bash
-printf '%s\n%s\n%s\n.\n' "$SENSENOVA_API_KEY" "$ACCOUNT" "$PASSWORD" | magpie plugin login sensenova
+printf '%s\n%s\n%s\n.\n' "$ACCOUNT" "$PASSWORD" "$SENSENOVA_API_KEY" | magpie plugin login sensenova
 ```
 
 **Or use the Magpie app's own sign-in**, which does not go through the CLI reader at all.

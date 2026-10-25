@@ -54,12 +54,10 @@ export const ZH = {
   loginTooFrequent: "操作过于频繁",
 
   methodLabel: "SenseNova API Key",
-  promptKey: "SenseNova API Key（控制台 → API-Key 管理）",
-  promptAccount: "可选：读额度用的 SenseNova 账号（留空 = 用 snquota 已存的凭据）",
+  promptAccount: "可选：读额度用的 SenseNova 账号（下一步填 API Key，留空 = 用 snquota 已存的凭据）",
   promptPassword: "可选：账号密码（明文存在本机 plugin-auth.json，只用于读额度）",
   placeholderAccount: "手机号 / 邮箱",
   placeholderPassword: "留空 = 不保存密码",
-  keyRequired: "API Key 不能为空：没有它这个供应商无法发出任何请求。",
 };
 
 /** The English half of those same labels, key for key. */
@@ -95,12 +93,10 @@ export const EN = {
   loginTooFrequent: "Too many attempts",
 
   methodLabel: "SenseNova API Key",
-  promptKey: "SenseNova API key (console → API-Key management)",
-  promptAccount: "Optional: the SenseNova account for the quota (blank = the credentials snquota already stored)",
+  promptAccount: "Optional: the SenseNova account for the quota (the API key follows; blank = the credentials snquota already stored)",
   promptPassword: "Optional: the account password (plaintext in this machine's plugin-auth.json, quota only)",
   placeholderAccount: "phone / email",
   placeholderPassword: "blank = do not store a password",
-  keyRequired: "The API key cannot be empty: without it this provider cannot send any request.",
 };
 
 /**
