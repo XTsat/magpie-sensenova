@@ -1,0 +1,30 @@
+/* Layout only. Colours, font, the field and button looks all come from the
+   bridge's base stylesheet, so this card is painted by the window's theme in
+   either mode and never has to know which one is on. */
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.row label {
+  color: var(--magpie-muted);
+}
+
+.status {
+  min-height: 1.2em;
+  margin: 6px 0 0;
+  color: var(--magpie-green);
+}
+
+.status[data-error] {
+  color: var(--magpie-red);
+}
+
+.note {
+  max-width: 64ch;
+  margin: 0;
+  color: var(--magpie-muted);
+}

@@ -19,7 +19,7 @@
 - **模型调用**：`https://token.sensenova.cn/v1`，凭据是 API Key；
 - **额度上报**：控制台主机上的一个内部端点，凭据是控制台 OAuth token。
 
-额度只出现在三个地方：provider 的账号行、`magpie quota`、网关的 `GET /v1/magpie/quotas`（Magpie 不允许插件新增面板，这是宿主设计而非本插件的缺陷）。
+额度只出现在三个地方：provider 的账号行、`magpie quota`、网关的 `GET /v1/magpie/quotas`（插件只能给自己加面板，改不了额度出现的位置，这是宿主设计而非本插件的缺陷）。
 
 **项目类型**：Magpie provider 插件 / 纯源码 npm 包（仓库即产物，无构建、无打包步骤）。
 **主语言与版本**：JavaScript（ESM，`.mjs`），Node.js ≥ 20（`package.json` 的 `engines`）；无 TypeScript。
@@ -37,6 +37,7 @@
 | `quota.mjs` | ✅ | 控制台额度客户端：凭据读写、cookie jar、三条 token 续期路径、取数与额度映射；**控制台内部端点路径的唯一存放处** |
 | `models.mjs` | ✅ | 模型目录：内置快照、`GET /models` 抓取缓存、Magpie 模型对象形状 |
 | `i18n.mjs` | ✅ | zh/en 文案表、`fill`、`strings`、`resolveLocale`、`poolLabel` |
+| `panel/` | ✅ | 设置卡片（`package.json` 的 `magpie.panels` → slot `settings`）：`settings.html` / `settings.js` / `text.js` / `settings.css`；下拉切换 `locale`，中英双语；**classic script，不能 import 仓库模块，文案自带在 `text.js`** |
 | `package.json` | ✅ | 元数据、`exports`/`files`、`engines`、`test` 脚本、`magpie.icon`；**唯一版本源** |
 | `NOTICE.md` | ✅ | 商标与图标归属、端点说明、与 CLI `snquota` 的共享逻辑声明 |
 | `assets/sensenova.png` | ✅ | 供应商图标（65×65 PNG），由 `internal.mjs` 内联成 data URI |
@@ -59,6 +60,7 @@ magpie-sensenova/
 ├── models.mjs             # 模型目录（快照 + 活列表 + 形状转换）
 ├── quota.mjs              # 控制台凭据与额度（含三条续期路径）
 ├── i18n.mjs               # zh/en 文案表与 locale 解析
+├── panel/                 # 设置卡片（magpie.panels → slot settings），中英双语，classic script
 ├── package.json           # 元数据 / exports / files / engines / test
 ├── assets/sensenova.png   # 供应商图标
 ├── test/                  # node:test 测试，不发布
@@ -92,6 +94,7 @@ magpie-sensenova/
 - `package.json` 的 `exports` 只有 `".": "./index.mjs"`：内部模块不对外暴露，测试用相对路径直接 import。
 - 单一职责：模型目录、额度、文案、宿主接线各归其位；公共常量（默认端点、超时、刷新周期、JS 包名）放各模块顶部的 `UPPER_SNAKE` 常量，禁止在函数里散落硬编码。
 - 网络访问只通过全局 `fetch`，并且**必须支持注入**（`{ fetchImpl = fetch }`）以便测试；外部端点集中在 `models.mjs` 与 `quota.mjs`。
+- `panel/` 里的脚本是 **classic script，不在上面这张 import 图里**：它跑在沙箱 iframe（`allow-scripts`、`connect-src 'none'`）中，没有 `allow-same-origin`，`import()` 会被拒，所以面板文案自成一表（`panel/text.js`，同样 zh/en 对称），改动时需与 `i18n.mjs` 手动保持一致。
 
 ### 2.3 项目特有约定与坑（改动前必读）
 
@@ -109,6 +112,7 @@ magpie-sensenova/
 12. **纯源码仓库**：被 Magpie 按仓库安装时读的是当前代码，所以被加载的文件必须已提交，且不要引入任何构建产物。
 13. **`README.md` 的测试段与测试数保持同步**：该段逐一列举覆盖点，历史提交都记录测试数（50 → 53 → 55）；增删测试时同步改这里。
 14. 不要提交 `node_modules/`、`*.log`、`.DS_Store`；全仓库强制 LF。
+15. **面板（`panel/`）的硬约束**：脚本必须外链（CSP 禁内联）、不能 `import`（沙箱帧没有 `allow-same-origin`）、不能联网（`connect-src 'none'`）；能用的宿主 API 只有 `magpie.ready` / `magpie.theme` / `magpie.onTheme` / `magpie.options.get()` / `magpie.options.set()`。面板只改 `locale`，保存时必须先合并再写（`{ ...options, locale }`），否则会抹掉 `baseURL` / `quotaTtlMs` 等选项；保存会让宿主重新加载插件（实测 0.1.1489）。面板文件必须对宿主进程可读（0644）：`0600` 会让宿主的静态资源路由直接 404。
 
 ---
 
@@ -117,7 +121,7 @@ magpie-sensenova/
 - **语言版本**：JavaScript（ESM，`"type": "module"`，文件后缀 `.mjs`），Node.js **≥ 20**（`package.json` 的 `engines.node`）。当前开发机实测 Node v24.15.0。
 - **包管理**：npm；**无 lock 文件**（运行时零依赖，不生成 `package-lock.json`）；依赖清单文件 `package.json` 是唯一声明来源。
 - **构建/运行**：**无构建步骤**。安装方式是 `magpie plugin add <本仓库路径>`，随后 `magpie plugin login sensenova`；开发时的入口就是 `index.mjs`。
-- **测试**：`node --test test/*.test.mjs`（等价 `npm test`），当前 **55 个测试全部通过**，全程无网络（fetch 全部打桩）。
+- **测试**：`node --test test/*.test.mjs`（等价 `npm test`），当前 **70 个测试全部通过**，全程无网络（fetch 全部打桩）；面板的 DOM 用桩（`test/panel.test.mjs`），不需要浏览器。
 - **禁止引入**：不引入与原功能无关的依赖；**运行时依赖必须保持为零**，需要装包时先与用户确认并说明理由；重活一律走 Node 内置能力。
 - 技术栈升级（Node 版本下限、宿主契约、主要依赖）属于用户可见变更：必须同步更新 `README.md` 对应章节，并先与用户确认。
 
@@ -190,10 +194,10 @@ magpie-sensenova/
 | `baseURL` | string | `https://token.sensenova.cn/v1` | Token Plan 地址 |
 | `quotaTtlMs` | number | `60000` | 额度读取缓存时长（毫秒）；非正数回退默认值 |
 | `scopeModel` | string | `flash-lite` | 专属池没有 `model_ids` 时用于作用域匹配的关键词 |
-| `locale` | string | `auto` | `zh` / `en` / `auto`（`auto` 走 `Intl`，再兜底环境变量，最后 `en`） |
+| `locale` | string | `auto` | `zh` / `en` / `auto`（`auto` 走 `Intl`，再兜底环境变量，最后 `en`）；也是面板唯一提供的选项 |
 | `credentialsFile` | string | `~/.sensenova-quota.json` | 控制台凭据文件位置（只改写入目标，不能关闭回写） |
 
-环境变量：`SENSENOVA_QUOTA_CONFIG` 覆盖凭据文件路径。其余配置项一律通过 `options` 传入——宿主不给插件 locale 通道，也没有插件的设置界面。
+环境变量：`SENSENOVA_QUOTA_CONFIG` 覆盖凭据文件路径。其余配置项一律通过 `options` 传入——宿主不给插件 locale 通道；插件能加的只有一个自己的面板（见 2.3 第 15 条），`options` 仍是唯一权威来源。
 
 凭据存放在哪（**不要改动这三处语义，它们同时被 README 的安全披露章节描述**）：
 
@@ -218,6 +222,7 @@ magpie-sensenova/
 - **`config(cfg)`**：就地写入 `cfg.provider.sensenova`（`name` / `npm` / `api` / `models`）。
 - **`provider`**：`id = "sensenova"`，`models(provider, { auth })` 有 key 时拉活列表，否则返回带回退标记的内置快照。
 - **`auth`**：`icon`（data URI）、`loader(getAuth)`（返回 `{ baseURL, apiKey, fetch }`，`fetch` 每次重读凭据、只重写 `authorization`）、`usage(getAuth)`、`methods[0]`（`type: "api"`，prompt 顺序固定为 `key` → `email` → `password`，`authorize` 只返回 `{ type: "success", key }`）。
+- **设置卡片**：`package.json` 的 `magpie.panels` 声明一个 `settings` 槽位的面板（`panel/settings.html`），只写 `locale`；`title` / `titles` 决定宿主画出的卡片标题（按窗口语言取），面板内部文字按 `magpie.theme.lang` 自选中英。
 - **外部端点**：公开的 `token.sensenova.cn/v1`（模型调用与 `GET /models`，默认值在 `models.mjs`，`index.mjs` 仅重复同一字面量）、`platform.sensenova.cn` 上的控制台内部端点（额度，**完整路径只写在 `quota.mjs`**：实现与文件头注释，另见 `index.mjs` 文件头与测试夹具）、`iam.sensecoreapi.cn` / `iam.sensecoreapi.tech`（控制台 token 续期，映射表在 `quota.mjs`）。
 - 命名保持一致：新增的 prompt、配置项、文案 key 都沿用现有拼写风格，不混用两套。
 - 用户可见行为变更（新增/删除配置项、prompt 变化、额度窗口形状、错误文案）必须先更新 README，再改代码。
@@ -395,7 +400,7 @@ refactor(i18n): 合并两处重复的池名归一逻辑
 
 提交前必须运行：
 
-- **测试**：`node --test test/*.test.mjs`（或 `npm test`），必须 **55/55 通过**；新增行为要补测试（`test/` 下按模块归档）。
+- **测试**：`node --test test/*.test.mjs`（或 `npm test`），必须 **70/70 通过**；新增行为要补测试（`test/` 下按模块归档）。
 - **冒烟**：`node -e 'import("./index.mjs").then((m) => console.log(typeof m.SenseNovaPlugin))'` 输出 `function`（验证入口可加载、图标与模块图未坏）。
 - **无构建、无 lint**：本项目没有 lint/format 命令，改动靠人工保持与相邻文件一致。
 - 测试不得依赖网络与真实凭据：一律打桩 `globalThis.fetch`（并在 `finally` 还原）或通过 `fetchImpl` 注入；临时文件用 `fs.mkdtempSync(os.tmpdir())` 并在 `finally` 清理。
@@ -407,10 +412,11 @@ refactor(i18n): 合并两处重复的池名归一逻辑
 
 - [ ] 依赖方向：新代码没有让底层模块反向依赖 `index.mjs`，`index.mjs` 仍只导出一个函数
 - [ ] 新增运行时文件：已加入 `package.json` 的 `files` 白名单
-- [ ] 约定与坑：核对了 2.3 的 14 条（尤其额度 `amount`、`remaining` 缺失跳过、`__` 键剥离、回写条件、续期顺序）
+- [ ] 约定与坑：核对了 2.3 的 15 条（尤其额度 `amount`、`remaining` 缺失跳过、`__` 键剥离、回写条件、续期顺序）
 - [ ] 注释：只写 non-obvious reason，语言跟随所在文件，无残留中间状态、无被注释掉的旧代码
 - [ ] 日志：没有新增 `console.*`；需要日志时走宿主 logger 且包 try/catch；用户可见文案进 `i18n.mjs`
-- [ ] i18n：新增文案已同时进 `ZH` 与 `EN`（键集合一致），`test/i18n.test.mjs` 通过
+- [ ] i18n：新增文案已同时进 `ZH` 与 `EN`（键集合一致），`test/i18n.test.mjs` 通过；面板文案同理进 `panel/text.js`，`test/panel.test.mjs` 通过
+- [ ] 面板：`panel/` 已在 `files` 白名单内，脚本不含内联/`import`/联网调用，保存用 `{ ...options, ... }` 合并而不是覆盖
 - [ ] CHANGELOG：`[Unreleased]` 已追加条目（或首次创建该文件），条目面向使用者、同一变化已合并为一条，保留了他人的既有记录
 - [ ] README：涉及用户可见变更（配置、登录、额度形状、存储/网络/可见性、测试数）时已同步，改动「存了什么/发往哪里/谁能看见」时已同步 Security notice 九节
 - [ ] 版本号：日常任务不递增；仅发版任务改 `package.json`（与 CHANGELOG 新版本段、tag 一致）

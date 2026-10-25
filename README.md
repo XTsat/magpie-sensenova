@@ -209,6 +209,14 @@ Three facts about Magpie's plugin mechanism decide how much that restraint is wo
   is the single most important consideration when deciding whether to fill in a password — if there are
   plugins of unknown provenance on the machine, leave it blank (see 5).
 
+One more surface exists, because this plugin asks for it: **a settings card**. `package.json` declares it
+(`magpie.panels`, slot `settings`), so Magpie's Plugins page frames it like any other plugin UI. That frame
+is sandboxed with `allow-scripts` and served under a policy of `connect-src 'none'`, so it cannot reach the
+network at all, and the only Magpie API it is handed is `magpie.options.get()` / `magpie.options.set()` for
+**this plugin's own options** — the five in Configuration, which hold no API key, no password and no console
+token. What it does with them is all of `panel/settings.js`: fill a dropdown with the three `locale` values
+and save the choice.
+
 Magpie itself reads `plugin-auth.json` (to manage sign-ins), `plugins.json` (plugins and their options),
 and `plugin-providers.json` (the last listed providers and models). And **the plugin detail page shows
 the README from npm** — so this README is this plugin's only disclosure surface, which is why every point
@@ -246,6 +254,8 @@ through 4 go away with it.
   header and passes the body through to `token.sensenova.cn` (see the code in 7).
 - It does not cache prompts or responses.
 - It does not write to any credential setting on SenseNova's servers.
+- It does not read or write anything outside its own `options`: the settings card offers the `locale`
+  dropdown and nothing else, and it has no network access.
 - It does not write back to `~/.sensenova-quota.json`, **except** when the credentials came from that
   file and a token was renewed (see the end of 1).
 
@@ -338,6 +348,9 @@ Sign-in asks three things:
 Leaving the last two blank is fine: the plugin falls back to `~/.sensenova-quota.json`, written on this
 machine by the `snquota` CLI.
 
+Installing also puts a **settings card** under Settings → Plugins. It is optional — its
+one setting is the plugin's language, which `magpie plugin options` can set just as well.
+
 ### If the prompts fail on Windows
 
 Magpie's prompt reader wants a real Windows console. Started from a shell that does not give it one — Git
@@ -405,20 +418,29 @@ The `options` for this entry in `plugins.json`:
 | `baseURL` | `https://token.sensenova.cn/v1` | Token Plan address |
 | `quotaTtlMs` | `60000` | How long a quota read is cached. `usage` gets polled; the cache keeps the endpoint from being hammered |
 | `scopeModel` | `flash-lite` | Which keyword scopes the dedicated pool's models |
-| `locale` | `auto` | `zh`, `en`, or `auto` to follow the machine. See below |
+| `locale` | `auto` | `zh`, `en`, or `auto` to follow the machine. Also offered as a dropdown by this plugin's settings card. See below |
 | `credentialsFile` | `~/.sensenova-quota.json` | Where the console credentials live |
 
 ### `locale`
 
-Magpie exposes no locale to a plugin and gives a plugin no settings UI, so the language of everything this
-plugin renders — quota window labels, units, error messages, and the sign-in prompts — is set here. Change
-it and Magpie picks the new strings up on the next load:
+The language of everything this plugin renders — quota window labels, units, error messages, and the
+sign-in prompts — is set here. There are two ways to set it.
+
+**From Magpie's settings, under Plugins.** This plugin declares a settings card (`magpie.panels`, slot
+`settings` — the `Plugins` tab of the settings page), so Magpie renders one in the language of the window,
+with the same three choices in a dropdown. Saving writes `options.locale` and Magpie reloads the plugin, so
+the new wording is in effect at once (observed on Magpie 0.1.1489: the plugin is re-read with the new
+options immediately after the save).
+
+**From the command line**, for a scripted install or a Magpie too old to render panels:
 
 ```bash
 magpie plugin options sensenova '{"locale":"en"}'
 ```
 
-`auto` (the default) reads the OS locale through `Intl`, which is what reflects the setting on Windows;
+Magpie hands no locale to a plugin — a card is told the *window's* language, which is not the same thing —
+so this option is what decides the language of the plugin's own strings. `auto` (the default) reads the OS
+locale through `Intl`, which is what reflects the setting on Windows;
 `LANG` is only consulted when `Intl` has nothing to say, so a Git Bash `LANG=C.UTF-8` does not flip a
 Chinese machine to English. Anything unrecognised falls back to English.
 
@@ -508,6 +530,9 @@ the built-in snapshot uses conservative placeholders; a live list that carries m
   wrong password), the account row shows an `error` asking you to sign in again.
 - The quota endpoint is a console-internal API rather than a public one, so a redesign may break it.
 - Model capability fields (context length and so on) are placeholders when there is no live list.
+- The settings card needs a Magpie that renders panels — checked on 0.1.1489. If no card appears under
+  Settings → Plugins, set the language with
+  `magpie plugin options sensenova '{"locale":"en"}'`; nothing else about the plugin changes.
 
 ---
 
@@ -579,7 +604,7 @@ are opt-in and not done.
 node --test test/*.test.mjs
 ```
 
-55 tests cover: mapping pools to windows (including the `used` percentage, `amount`, `limit`, `span`,
+70 tests cover: mapping pools to windows (including the `used` percentage, `amount`, `limit`, `span`,
 `resetsAt`, the dedicated pool's model scoping, and the granted balance); that `limit - amount`
 reproduces the console balance; that a window with an unknown usage is skipped rather than reported as
 zero; degradation when fields are missing; JWT expiry; refresh-token renewal; the error raised when
@@ -589,4 +614,12 @@ model normalization; locale resolution (explicit, OS, environment, and POSIX `C`
 tables stay in step; that the shared pool is not run through the dedicated-pool naming rule; that
 `accountNameOf` reads the token and yields nothing rather than inventing a name; that the account prompt is
 declared under the `email` key and that `consoleAuthOf` still reads the older `username`/`account`
-spelling; and the `usage` hook end to end in both languages.
+spelling; the `usage` hook end to end in both languages; and the settings card — that its files and their
+references exist, that its two text tables stay in step and stay free of secrets, that it saves the chosen
+`locale` without dropping the options it does not offer, and that it follows the window's language.
+
+The card's behaviour is tested against a stubbed DOM, not a browser; the panel's real rendering was checked
+by hand against Magpie 0.1.1489 (the frame is served, its scripts load, `magpie.options.set` writes the
+option and the plugin is reloaded). The `panel/` scripts are classic scripts rather than modules, so they
+cannot import the plugin's own modules — the panel's words live in `panel/text.js`, next to the tables in
+`i18n.mjs`.
